@@ -1,0 +1,15 @@
+flask
+flask-cors
+sqlalchemy
+pandas
+numpy
+scikit-learn
+xgboost
+shap
+transformers
+torch
+requests
+python-dotenv
+joblib
+pytest
+matplotlib
