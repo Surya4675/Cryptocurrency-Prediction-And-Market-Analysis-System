@@ -12,6 +12,7 @@ class Cryptocurrency(db.Model):
     name = db.Column(db.String, nullable=False)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_requested_at = db.Column(db.DateTime)
     
     market_prices = db.relationship('MarketPrice', backref='cryptocurrency', lazy=True)
     news_articles = db.relationship('NewsArticle', backref='cryptocurrency', lazy=True)

@@ -1,8 +1,9 @@
 import os
+
 import sqlite3
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -10,21 +11,25 @@ load_dotenv()
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-DB_PATH = "database/app.db"
+DB_PATH = "backend/database/app.db"
 
 # Basic list of coins to track
 COINS = [
     {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin"},
-    {"id": "ethereum", "symbol": "eth", "name": "Ethereum"}
+    {"id": "ethereum", "symbol": "eth", "name": "Ethereum"},
+    {"id": "solana", "symbol": "sol", "name": "Solana"},
+    {"id": "cardano", "symbol": "ada", "name": "Cardano"},
+    {"id": "ripple", "symbol": "xrp", "name": "XRP"}
 ]
 
 def init_db():
     """Ensure the database and tables exist."""
     print("Initializing database...")
-    conn = sqlite3.connect(DB_PATH)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     
     # Run the schema file
-    with open("database/schema.sql", "r") as f:
+    with open("backend/database/schema.sql", "r") as f:
         schema = f.read()
     
     conn.executescript(schema)
@@ -33,7 +38,7 @@ def init_db():
 
 def insert_coins():
     """Insert initial coins into the cryptocurrencies table."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     for coin in COINS:
         cursor.execute('''
@@ -54,49 +59,88 @@ def fetch_market_data(coin_id, days=1000):
         "interval": "daily"
     }
     
-    headers = {"accept": "application/json"}
+    headers = {
+        "accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     if COINGECKO_API_KEY and COINGECKO_API_KEY != "your_coingecko_api_key_here":
         headers["x-cg-demo-api-key"] = COINGECKO_API_KEY
 
-    try:
-        response = requests.get(url, params=params, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        prices = data.get("prices", [])
-        volumes = data.get("total_volumes", [])
-        market_caps = data.get("market_caps", [])
-        
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # We need OHLC theoretically, but CoinGecko's basic endpoint gives us price.
-        # We'll store it as 'close' and 'price'.
-        for i in range(len(prices)):
-            timestamp_ms = prices[i][0]
-            price = prices[i][1]
-            volume = volumes[i][1] if i < len(volumes) else None
-            market_cap = market_caps[i][1] if i < len(market_caps) else None
+    max_retries = 3
+    base_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            data = response.json()
             
-            # Convert ms timestamp to datetime
-            dt = datetime.utcfromtimestamp(timestamp_ms / 1000.0)
+            prices = data.get("prices", [])
+            volumes = data.get("total_volumes", [])
+            market_caps = data.get("market_caps", [])
             
-            cursor.execute('''
-                INSERT OR IGNORE INTO market_prices (coin_id, timestamp, close, price, volume, market_cap, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (coin_id, dt.strftime("%Y-%m-%d %H:%M:%S"), price, price, volume, market_cap, "coingecko"))
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            cursor = conn.cursor()
             
-        conn.commit()
-        conn.close()
-        print(f"Successfully saved market data for {coin_id}.")
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to fetch market data for {coin_id}: {e}")
+            for i in range(len(prices)):
+                timestamp_ms = prices[i][0]
+                price = prices[i][1]
+                volume = volumes[i][1] if i < len(volumes) else None
+                market_cap = market_caps[i][1] if i < len(market_caps) else None
+                
+                dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
+                
+                cursor.execute('''
+                    INSERT OR IGNORE INTO market_prices (coin_id, timestamp, close, price, volume, market_cap, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (coin_id, dt.strftime("%Y-%m-%d %H:%M:%S"), price, price, volume, market_cap, "coingecko"))
+                
+            conn.commit()
+            conn.close()
+            print(f"Successfully saved market data for {coin_id}.")
+            return # Success, exit retry loop
+            
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"Rate limited or error on {coin_id}. Retrying in {delay}s... ({e})")
+                time.sleep(delay)
+            else:
+                print(f"Failed to fetch market data for {coin_id} after {max_retries} attempts: {e}")
+
+def get_active_coins():
+    """Fetch top 50 active coins from the database, prioritizing recently requested ones."""
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    cursor = conn.cursor()
+    # Order by last_requested_at so demanded coins jump to the front of the queue
+    cursor.execute('SELECT coin_id FROM cryptocurrencies ORDER BY last_requested_at DESC NULLS LAST, id ASC LIMIT 50')
+    coins = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    
+    # Fallback if DB is completely empty before fetch_live runs
+    if not coins:
+        return ["bitcoin", "ethereum", "solana", "cardano", "ripple"]
+    return coins
 
 def fetch_news_data(coin_id):
-    """Fetch news from NewsAPI (mock or real if key exists)."""
+    """Fetch news from NewsAPI or skip if key is missing/recently cached."""
+    
+    # Check if we already have recent news (within the last 12 hours) to save API quota
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT COUNT(*) FROM news_articles 
+        WHERE coin_id = ? AND published_at > datetime('now', '-12 hours')
+    ''', (coin_id,))
+    recent_news_count = cursor.fetchone()[0]
+    conn.close()
+    
+    if recent_news_count > 0:
+        print(f"Skipping NewsAPI fetch for {coin_id}: {recent_news_count} recent articles already exist.")
+        return
+        
     if not NEWS_API_KEY or NEWS_API_KEY == "your_news_api_key_here":
-        print(f"No valid NEWS_API_KEY found. Skipping real news fetch for {coin_id}.")
+        print(f"Skipping NewsAPI for {coin_id} because API key is missing.")
         return
 
     print(f"Fetching news for {coin_id}...")
@@ -115,7 +159,7 @@ def fetch_news_data(coin_id):
         data = response.json()
         
         articles = data.get("articles", [])
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=60)
         cursor = conn.cursor()
         
         for art in articles:
@@ -141,14 +185,16 @@ def fetch_news_data(coin_id):
 def main():
     print("Starting data fetching pipeline...")
     # Ensure database dir exists
-    os.makedirs("database", exist_ok=True)
+    os.makedirs("backend/database", exist_ok=True)
     
     init_db()
-    insert_coins()
     
-    for coin in COINS:
-        fetch_market_data(coin["id"], days=100)
-        fetch_news_data(coin["id"])
+    coins_to_fetch = get_active_coins()
+    print(f"Will fetch data for {len(coins_to_fetch)} coins.")
+    
+    for coin_id in coins_to_fetch:
+        fetch_market_data(coin_id, days=100) # Reduced to 100 days to avoid huge API loads
+        fetch_news_data(coin_id)
         time.sleep(2)  # Basic rate limit sleep
         
     print("Data fetching pipeline completed.")

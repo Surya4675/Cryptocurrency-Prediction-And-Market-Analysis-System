@@ -3,11 +3,11 @@ import pandas as pd
 import numpy as np
 import os
 
-DB_PATH = "database/app.db"
+DB_PATH = "backend/database/app.db"
 
 def load_market_data(coin_id):
     """Load market data from the database."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     query = "SELECT timestamp, price, volume FROM market_prices WHERE coin_id = ? ORDER BY timestamp ASC"
     df = pd.read_sql_query(query, conn, params=(coin_id,))
     
@@ -85,7 +85,7 @@ def generate_technical_features(df):
 
 def save_features(coin_id, df):
     """Save the engineered features back to the database."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     
     # Drop rows with NaNs caused by rolling windows
@@ -123,7 +123,7 @@ def main():
         print("Database not found. Please run fetch_data.py first.")
         return
         
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     cursor.execute("SELECT coin_id FROM cryptocurrencies")
     coins = [row[0] for row in cursor.fetchall()]

@@ -7,12 +7,12 @@ import numpy as np
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-DB_PATH = "database/app.db"
-MODEL_DIR = "ml/artifacts/models"
+DB_PATH = "backend/database/app.db"
+MODEL_DIR = "backend/ml/artifacts/models"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 def load_data_for_training(coin_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     # The target is the NEXT day's return_1d.
     # We can calculate this by shifting return_1d backwards by 1 within the dataframe.
     query = """
@@ -82,11 +82,15 @@ def train_model(coin_id):
         print(f"Fold {fold} - MSE: {mse:.6f}, MAE: {mae:.6f}, Dir. Acc: {direction_correct:.2%}")
         fold += 1
     
-    # Train final model on all available data
+    # Train final model on all available data with better hyperparameters
     final_model = xgb.XGBRegressor(
-        n_estimators=100, 
+        n_estimators=500, 
         learning_rate=0.05, 
-        max_depth=4, 
+        max_depth=6, 
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_weight=2,
+        gamma=0.1,
         random_state=42
     )
     final_model.fit(X, y)
@@ -97,7 +101,16 @@ def train_model(coin_id):
     print(f"Final model saved to {model_path}")
 
 if __name__ == '__main__':
-    # Train for some basic coins
-    coins = ['bitcoin', 'ethereum']
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    cursor = conn.cursor()
+    # Get distinct coins that have features
+    cursor.execute("SELECT DISTINCT coin_id FROM features")
+    coins = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    
+    if not coins:
+        print("No features found in DB. Skipping training.")
+    
+    print(f"Found {len(coins)} coins with features. Starting training...")
     for c in coins:
         train_model(c)

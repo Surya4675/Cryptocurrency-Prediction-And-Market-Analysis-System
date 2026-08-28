@@ -4,17 +4,19 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import pandas as pd
 import torch.nn.functional as F
 
-DB_PATH = "database/app.db"
+DB_PATH = "backend/database/app.db"
 # Use FinBERT model from Hugging Face
 MODEL_NAME = "ProsusAI/finbert"
 
 def load_news_without_sentiment():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     query = """
     SELECT n.id, n.coin_id, n.title, n.description
     FROM news_articles n
     LEFT JOIN sentiment_results s ON n.id = s.news_id
     WHERE s.id IS NULL
+    ORDER BY n.published_at DESC
+    LIMIT 50
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
@@ -30,7 +32,7 @@ def analyze_sentiment():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
     
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     
     # FinBERT labels: 0: positive, 1: negative, 2: neutral

@@ -3,13 +3,17 @@ import xgboost as xgb
 import sqlite3
 import joblib
 import os
+import sys
 from datetime import datetime, timedelta
 
-DB_PATH = "database/app.db"
-MODEL_DIR = "ml/artifacts/models"
+# Ensure the root project directory is in the python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+
+DB_PATH = "backend/database/app.db"
+MODEL_DIR = "backend/ml/artifacts/models"
 
 def load_latest_features(coin_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     query = """
     SELECT * FROM features 
     WHERE coin_id = ? 
@@ -51,7 +55,7 @@ def predict_next_day(coin_id):
     predicted_return = float(model.predict(X)[0])
     
     # We'll save it to DB
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     
     target_date = pd.to_datetime(df['date'].iloc[0]) + timedelta(days=1)
@@ -71,12 +75,32 @@ def predict_next_day(coin_id):
         VALUES (?, ?, ?, ?, ?, ?)
     ''', (coin_id, target_date.date(), current_price, predicted_price, predicted_return, 'xgboost_v2_returns'))
     
+    # Get the ID of the prediction we just inserted
+    prediction_id = cursor.lastrowid
+    
     conn.commit()
     conn.close()
     
-    print(f"Predicted next day price for {coin_id}: {prediction}")
-    return prediction
+    # Generate SHAP explanations for this prediction
+    try:
+        from backend.ml.explainability.shap_explainer import explain_prediction
+        explain_prediction(coin_id, prediction_id)
+    except Exception as e:
+        print(f"Failed to generate SHAP explanations for {coin_id}: {e}")
+    
+    print(f"Predicted next day price for {coin_id}: ${predicted_price:.2f} (Return: {predicted_return:.2%})")
+    return {"predicted_price": predicted_price, "predicted_return": predicted_return}
 
 if __name__ == '__main__':
-    predict_next_day('bitcoin')
-    predict_next_day('ethereum')
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    cursor = conn.cursor()
+    # Get distinct coins that have features
+    cursor.execute("SELECT DISTINCT coin_id FROM features")
+    coins = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    
+    if not coins:
+        print("No features found in DB. Skipping predictions.")
+    
+    for c in coins:
+        predict_next_day(c)

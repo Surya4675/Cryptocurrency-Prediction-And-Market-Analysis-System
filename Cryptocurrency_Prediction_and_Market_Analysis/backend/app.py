@@ -1,11 +1,21 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
+from flask_caching import Cache
 from .config import Config
 from .models.db_models import db
+
+# Initialize cache
+cache = Cache()
 
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
+    
+    # Configure Cache
+    app.config['CACHE_TYPE'] = 'SimpleCache'
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 60
+    cache.init_app(app)
+    cache.app = app  # Fix for flask-caching factory pattern bug
     
     CORS(app)
     db.init_app(app)

@@ -5,8 +5,8 @@ import sqlite3
 import joblib
 import os
 
-DB_PATH = "database/app.db"
-MODEL_DIR = "ml/artifacts/models"
+DB_PATH = "backend/database/app.db"
+MODEL_DIR = "backend/ml/artifacts/models"
 
 def explain_prediction(coin_id, prediction_id):
     model_path = os.path.join(MODEL_DIR, f"{coin_id}_xgboost.joblib")
@@ -17,7 +17,7 @@ def explain_prediction(coin_id, prediction_id):
     model = joblib.load(model_path)
     
     # Load latest features used for this prediction
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=60)
     query = """
     SELECT * FROM features 
     WHERE coin_id = ? 
