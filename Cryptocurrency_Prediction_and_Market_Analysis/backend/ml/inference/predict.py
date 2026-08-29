@@ -38,7 +38,8 @@ def predict_next_day(coin_id):
         
     features = ['sma_7', 'sma_14', 'sma_30', 'ema_7', 'ema_14', 'rsi_14', 
                 'macd', 'macd_signal', 'volatility_7', 'volatility_30', 
-                'return_1d', 'lag_1', 'lag_2', 'lag_3', 'lag_7', 'volume_change']
+                'return_1d', 'lag_1', 'lag_2', 'lag_3', 'lag_7', 'volume_change',
+                'bb_upper', 'bb_lower', 'bb_width', 'atr_14', 'return_14d']
                 
     # Include sentiment_score if the model expects it
     if 'sentiment_score' in df.columns:
@@ -70,10 +71,16 @@ def predict_next_day(coin_id):
     else:
         predicted_price = None
     
+    # Dynamic confidence score based on recent volatility and technical factors
+    base_confidence = 0.85
+    volatility = float(df['volatility_30'].iloc[0]) if not pd.isna(df['volatility_30'].iloc[0]) else 0.05
+    vol_penalty = min(0.3, volatility * 2) 
+    confidence = max(0.50, min(0.95, base_confidence - vol_penalty))
+
     cursor.execute('''
-        INSERT INTO predictions (coin_id, prediction_for_date, current_price, predicted_price, predicted_return, model_version)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (coin_id, target_date.date(), current_price, predicted_price, predicted_return, 'xgboost_v2_returns'))
+        INSERT INTO predictions (coin_id, prediction_for_date, current_price, predicted_price, predicted_return, confidence, model_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (coin_id, target_date.date(), current_price, predicted_price, predicted_return, confidence, 'xgboost_v3_tuned'))
     
     # Get the ID of the prediction we just inserted
     prediction_id = cursor.lastrowid

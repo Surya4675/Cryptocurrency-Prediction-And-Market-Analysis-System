@@ -24,7 +24,7 @@ const PredictionCard = ({ prediction, livePrice }) => {
   const currentPrice = livePrice || prediction.current_price;
   const isUp = targetPrice > currentPrice;
   const changePercent = currentPrice ? ((targetPrice - currentPrice) / currentPrice) * 100 : 0;
-  const confidence = prediction.confidence || 0.85; // Default if backend doesn't provide it yet
+  const confidence = prediction.confidence ?? 0.85; // Use backend confidence if available
   
   // Format SHAP explanations feature names
   const formatFeatureName = (name) => {

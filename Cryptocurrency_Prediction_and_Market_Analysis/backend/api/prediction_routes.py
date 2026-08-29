@@ -45,6 +45,7 @@ def get_prediction(coin_id):
         'current_price': prediction.current_price,
         'predicted_price': prediction.predicted_price,
         'predicted_return': prediction.predicted_return,
+        'confidence': prediction.confidence,
         'model_version': prediction.model_version,
         'generated_at': prediction.generated_at.isoformat() if prediction.generated_at else None,
         'explanations': explanations

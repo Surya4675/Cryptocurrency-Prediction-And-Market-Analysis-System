@@ -81,6 +81,18 @@ def generate_technical_features(df):
     # 8. Volume Change
     df['volume_change'] = df['volume'].pct_change(1)
     
+    # 9. Bollinger Bands
+    df['bb_upper'] = df['sma_14'] + (df['price'].rolling(window=14).std() * 2)
+    df['bb_lower'] = df['sma_14'] - (df['price'].rolling(window=14).std() * 2)
+    df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['sma_14']
+    
+    # 10. Approximated ATR using Daily Price Range
+    high_low = df['price'].rolling(window=2).max() - df['price'].rolling(window=2).min()
+    df['atr_14'] = high_low.rolling(window=14).mean()
+    
+    # 11. 14-day momentum (return)
+    df['return_14d'] = df['price'].pct_change(14)
+    
     return df
 
 def save_features(coin_id, df):
@@ -98,8 +110,9 @@ def save_features(coin_id, df):
                 INSERT OR REPLACE INTO features (
                     coin_id, date, sma_7, sma_14, sma_30, ema_7, ema_14, 
                     rsi_14, macd, macd_signal, volatility_7, volatility_30, 
-                    return_1d, lag_1, lag_2, lag_3, lag_7, volume_change, sentiment_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    return_1d, lag_1, lag_2, lag_3, lag_7, volume_change, sentiment_score,
+                    bb_upper, bb_lower, bb_width, atr_14, return_14d
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 coin_id, str(row['date']), 
                 row['sma_7'], row['sma_14'], row['sma_30'], 
@@ -107,7 +120,9 @@ def save_features(coin_id, df):
                 row['macd'], row['macd_signal'], 
                 row['volatility_7'], row['volatility_30'], 
                 row['return_1d'], row['lag_1'], row['lag_2'], row['lag_3'], row['lag_7'], 
-                row['volume_change'], row.get('sentiment_score', 0)
+                row['volume_change'], row.get('sentiment_score', 0),
+                row.get('bb_upper', 0), row.get('bb_lower', 0), row.get('bb_width', 0), 
+                row.get('atr_14', 0), row.get('return_14d', 0)
             ))
             count += 1
         except Exception as e:

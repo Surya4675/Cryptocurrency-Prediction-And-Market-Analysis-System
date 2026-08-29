@@ -4,7 +4,7 @@ import sqlite3
 import joblib
 import os
 import numpy as np
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 DB_PATH = "backend/database/app.db"
@@ -45,7 +45,8 @@ def train_model(coin_id):
     # Features and target
     features = ['sma_7', 'sma_14', 'sma_30', 'ema_7', 'ema_14', 'rsi_14', 
                 'macd', 'macd_signal', 'volatility_7', 'volatility_30', 
-                'return_1d', 'lag_1', 'lag_2', 'lag_3', 'lag_7', 'volume_change']
+                'return_1d', 'lag_1', 'lag_2', 'lag_3', 'lag_7', 'volume_change',
+                'bb_upper', 'bb_lower', 'bb_width', 'atr_14', 'return_14d']
                 
     # Include sentiment_score if it exists and has non-null values
     if 'sentiment_score' in df.columns and df['sentiment_score'].notna().sum() > 0:
@@ -82,18 +83,32 @@ def train_model(coin_id):
         print(f"Fold {fold} - MSE: {mse:.6f}, MAE: {mae:.6f}, Dir. Acc: {direction_correct:.2%}")
         fold += 1
     
-    # Train final model on all available data with better hyperparameters
-    final_model = xgb.XGBRegressor(
-        n_estimators=500, 
-        learning_rate=0.05, 
-        max_depth=6, 
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_weight=2,
-        gamma=0.1,
-        random_state=42
+    # Hyperparameter tuning with RandomizedSearchCV
+    param_distributions = {
+        'n_estimators': [100, 300, 500],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'max_depth': [3, 5, 7],
+        'subsample': [0.7, 0.8, 0.9],
+        'colsample_bytree': [0.7, 0.8, 0.9],
+        'min_child_weight': [1, 2, 3],
+        'gamma': [0, 0.1, 0.2]
+    }
+    
+    xgb_base = xgb.XGBRegressor(random_state=42)
+    search = RandomizedSearchCV(
+        estimator=xgb_base,
+        param_distributions=param_distributions,
+        n_iter=10,
+        scoring='neg_mean_absolute_error',
+        cv=TimeSeriesSplit(n_splits=3),
+        random_state=42,
+        n_jobs=-1
     )
-    final_model.fit(X, y)
+    print("Running hyperparameter tuning...")
+    search.fit(X, y)
+    
+    print(f"Best params: {search.best_params_}")
+    final_model = search.best_estimator_
     
     # Save model
     model_path = os.path.join(MODEL_DIR, f"{coin_id}_xgboost.joblib")
