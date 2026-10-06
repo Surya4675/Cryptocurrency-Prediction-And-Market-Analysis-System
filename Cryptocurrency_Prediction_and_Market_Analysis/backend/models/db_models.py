@@ -82,6 +82,7 @@ class Feature(db.Model):
     volatility_7 = db.Column(db.Float)
     volatility_30 = db.Column(db.Float)
     return_1d = db.Column(db.Float)
+    log_return_1d = db.Column(db.Float)
     return_14d = db.Column(db.Float)
     bb_upper = db.Column(db.Float)
     bb_lower = db.Column(db.Float)
@@ -93,6 +94,7 @@ class Feature(db.Model):
     lag_7 = db.Column(db.Float)
     volume_change = db.Column(db.Float)
     sentiment_score = db.Column(db.Float)
+    close_price = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     __table_args__ = (db.UniqueConstraint('coin_id', 'date', name='_coin_date_uc'),)

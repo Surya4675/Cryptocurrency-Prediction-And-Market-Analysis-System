@@ -47,13 +47,11 @@ const News = () => {
         </div>
         
         {coins.length > 0 && (
-          <div className="glass-panel rounded-lg px-2 py-1">
-            <CoinSelector 
-              coins={coins} 
-              selectedCoin={selectedCoin} 
-              onChange={(e) => setSelectedCoin(e.target.value)} 
-            />
-          </div>
+          <CoinSelector 
+            coins={coins} 
+            selectedCoin={selectedCoin} 
+            onChange={(e) => setSelectedCoin(e.target.value)} 
+          />
         )}
       </div>
 

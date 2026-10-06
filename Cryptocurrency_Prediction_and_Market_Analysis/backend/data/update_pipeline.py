@@ -13,7 +13,7 @@ from backend.ml.features.build_features import load_market_data, generate_techni
 from backend.ml.sentiment.finbert import analyze_sentiment
 from backend.ml.inference.predict import predict_next_day
 
-DB_PATH = "backend/database/app.db"
+DB_PATH = Config.DATABASE_PATH
 NEWS_API_KEY = Config.NEWS_API_KEY
 COINGECKO_API_KEY = Config.COINGECKO_API_KEY
 
@@ -21,42 +21,66 @@ def fetch_coingecko_prices(coin_id):
     """Fetch 30 days of daily historical data for features, and today's latest price."""
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
     params = {
-        'vs_currency': 'usd',
+        'vs_currency': 'inr',
         'days': '35',
         'interval': 'daily',
         'x_cg_demo_api_key': COINGECKO_API_KEY
     }
     
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        print(f"Error fetching CoinGecko data for {coin_id}: {response.status_code}")
-        return False
-        
-    data = response.json()
-    prices = data.get('prices', [])
-    volumes = data.get('total_volumes', [])
-    market_caps = data.get('market_caps', [])
-    
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    cursor = conn.cursor()
-    
-    for i in range(len(prices)):
-        timestamp = pd.to_datetime(prices[i][0], unit='ms')
-        price = prices[i][1]
-        volume = volumes[i][1] if i < len(volumes) else 0
-        market_cap = market_caps[i][1] if i < len(market_caps) else 0
-        
-        try:
-            cursor.execute('''
-                INSERT OR IGNORE INTO market_prices (coin_id, timestamp, price, volume, market_cap, source)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (coin_id, timestamp, price, volume, market_cap, 'coingecko'))
-        except Exception as e:
-            pass
+    headers = {
+        "accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=4)
+        if response.status_code == 200:
+            data = response.json()
+            prices = data.get('prices', [])
+            volumes = data.get('total_volumes', [])
+            market_caps = data.get('market_caps', [])
             
-    conn.commit()
-    conn.close()
-    return True
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            cursor = conn.cursor()
+            
+            for i in range(len(prices)):
+                timestamp = pd.to_datetime(prices[i][0], unit='ms')
+                price = prices[i][1]
+                volume = volumes[i][1] if i < len(volumes) else 0
+                market_cap = market_caps[i][1] if i < len(market_caps) else 0
+                
+                try:
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO market_prices (coin_id, timestamp, price, volume, market_cap, source)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (coin_id, timestamp, price, volume, market_cap, 'coingecko'))
+                except Exception:
+                    pass
+                    
+            conn.commit()
+            conn.close()
+            return True
+    except Exception as e:
+        print(f"CoinGecko API direct request skipped ({e}), switching to market service fallback...")
+        
+    # Resilient fallback using fetch_chart_history
+    try:
+        from backend.services.market_data_service import fetch_chart_history
+        chart = fetch_chart_history(coin_id, days=35)
+        if chart:
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            cursor = conn.cursor()
+            for pt in chart:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO market_prices (coin_id, timestamp, price, volume, market_cap, source)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (coin_id, pt['timestamp'], pt['price'], pt.get('volume', 0), pt.get('market_cap', 0), 'history_fallback'))
+            conn.commit()
+            conn.close()
+            return True
+    except Exception as e:
+        print(f"Fallback history fetch failed for {coin_id}: {e}")
+        
+    return False
 
 def fetch_news_api(coin_id, coin_name):
     """Fetch the latest news for the coin using Google News RSS (No Rate Limits!)."""
@@ -109,9 +133,9 @@ def fetch_news_api(coin_id, coin_name):
         
         if pub_date:
             try:
-                pub_date = pd.to_datetime(pub_date).replace(tzinfo=None)
+                pub_date = pd.to_datetime(pub_date).replace(tzinfo=None).to_pydatetime()
             except:
-                pub_date = pd.Timestamp.now()
+                pub_date = datetime.now()
             
         # Check if URL exists to avoid duplicates
         cursor.execute("SELECT id FROM news_articles WHERE url = ?", (url,))

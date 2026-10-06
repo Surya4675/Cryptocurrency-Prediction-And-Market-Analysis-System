@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS cryptocurrencies (
     symbol TEXT NOT NULL,
     name TEXT NOT NULL,
     is_active BOOLEAN DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_requested_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS market_prices (
@@ -67,12 +68,19 @@ CREATE TABLE IF NOT EXISTS features (
     volatility_7 REAL,
     volatility_30 REAL,
     return_1d REAL,
+    log_return_1d REAL,
+    bb_upper REAL,
+    bb_lower REAL,
+    bb_width REAL,
+    atr_14 REAL,
+    return_14d REAL,
     lag_1 REAL,
     lag_2 REAL,
     lag_3 REAL,
     lag_7 REAL,
     volume_change REAL,
     sentiment_score REAL,
+    close_price REAL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(coin_id, date),
     FOREIGN KEY(coin_id) REFERENCES cryptocurrencies(coin_id)
@@ -86,6 +94,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     current_price REAL,
     predicted_price REAL,
     predicted_return REAL,
+    confidence REAL,
     model_version TEXT,
     feature_version TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

@@ -13,9 +13,14 @@ def create_app(config_class=Config):
     
     # Configure Cache
     app.config['CACHE_TYPE'] = 'SimpleCache'
-    app.config['CACHE_DEFAULT_TIMEOUT'] = 60
+    app.config['CACHE_DEFAULT_TIMEOUT'] = 15
     cache.init_app(app)
     cache.app = app  # Fix for flask-caching factory pattern bug
+    try:
+        with app.app_context():
+            cache.clear()
+    except Exception:
+        pass
     
     CORS(app)
     db.init_app(app)

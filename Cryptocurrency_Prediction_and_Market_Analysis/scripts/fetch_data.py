@@ -11,7 +11,9 @@ load_dotenv()
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-DB_PATH = "backend/database/app.db"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(BASE_DIR, "backend", "database", "app.db")
+SCHEMA_PATH = os.path.join(BASE_DIR, "backend", "database", "schema.sql")
 
 # Basic list of coins to track
 COINS = [
@@ -29,7 +31,7 @@ def init_db():
     conn = sqlite3.connect(DB_PATH, timeout=60)
     
     # Run the schema file
-    with open("backend/database/schema.sql", "r") as f:
+    with open(SCHEMA_PATH, "r") as f:
         schema = f.read()
     
     conn.executescript(schema)
@@ -54,7 +56,7 @@ def fetch_market_data(coin_id, days=1000):
     print(f"Fetching market data for {coin_id}...")
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
     params = {
-        "vs_currency": "usd",
+        "vs_currency": "inr",
         "days": str(days),
         "interval": "daily"
     }
@@ -113,7 +115,7 @@ def get_active_coins():
     conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     # Order by last_requested_at so demanded coins jump to the front of the queue
-    cursor.execute('SELECT coin_id FROM cryptocurrencies ORDER BY last_requested_at DESC NULLS LAST, id ASC LIMIT 50')
+    cursor.execute('SELECT coin_id FROM cryptocurrencies ORDER BY last_requested_at DESC NULLS LAST, id ASC LIMIT 100')
     coins = [row[0] for row in cursor.fetchall()]
     conn.close()
     
@@ -123,7 +125,10 @@ def get_active_coins():
     return coins
 
 def fetch_news_data(coin_id):
-    """Fetch news from NewsAPI or skip if key is missing/recently cached."""
+    """Fetch the latest news for the coin using Google News RSS (No Rate Limits!)."""
+    import urllib.parse
+    import xml.etree.ElementTree as ET
+    import pandas as pd
     
     # Check if we already have recent news (within the last 12 hours) to save API quota
     conn = sqlite3.connect(DB_PATH, timeout=60)
@@ -133,54 +138,71 @@ def fetch_news_data(coin_id):
         WHERE coin_id = ? AND published_at > datetime('now', '-12 hours')
     ''', (coin_id,))
     recent_news_count = cursor.fetchone()[0]
-    conn.close()
     
     if recent_news_count > 0:
-        print(f"Skipping NewsAPI fetch for {coin_id}: {recent_news_count} recent articles already exist.")
+        print(f"Skipping News fetch for {coin_id}: {recent_news_count} recent articles already exist.")
+        conn.close()
         return
         
-    if not NEWS_API_KEY or NEWS_API_KEY == "your_news_api_key_here":
-        print(f"Skipping NewsAPI for {coin_id} because API key is missing.")
-        return
-
-    print(f"Fetching news for {coin_id}...")
-    url = "https://newsapi.org/v2/everything"
-    params = {
-        "q": coin_id,
-        "language": "en",
-        "sortBy": "publishedAt",
-        "apiKey": NEWS_API_KEY,
-        "pageSize": 10
-    }
+    print(f"Fetching news for {coin_id} via Google News...")
+    coin_name = coin_id.replace('-', ' ')
+    query = urllib.parse.quote(f'"{coin_name}" crypto')
+    url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
     
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
-        data = response.json()
-        
-        articles = data.get("articles", [])
-        conn = sqlite3.connect(DB_PATH, timeout=60)
-        cursor = conn.cursor()
-        
-        for art in articles:
-            cursor.execute('''
-                INSERT OR IGNORE INTO news_articles (coin_id, title, description, source, url, published_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                coin_id, 
-                art.get("title"), 
-                art.get("description"), 
-                art.get("source", {}).get("name"), 
-                art.get("url"), 
-                art.get("publishedAt")
-            ))
             
+        root = ET.fromstring(response.content)
+        articles = []
+        for item in root.findall('./channel/item')[:10]: # Limit to top 10
+            title = item.findtext('title')
+            link = item.findtext('link')
+            pub_date = item.findtext('pubDate')
+            source = item.findtext('source') or "Google News"
+            description = title 
+            
+            articles.append({
+                'title': title,
+                'description': description,
+                'source': source,
+                'url': link,
+                'publishedAt': pub_date
+            })
+            
+        for art in articles:
+            title = art.get('title')
+            if not title: continue
+                
+            desc = art.get('description', '')
+            source = art.get('source', 'Unknown')
+            art_url = art.get('url', '')
+            pub_date = art.get('publishedAt')
+            
+            if pub_date:
+                try:
+                    pub_date_dt = pd.to_datetime(pub_date).replace(tzinfo=None)
+                    pub_date_str = pub_date_dt.strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    pub_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                pub_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            
+            cursor.execute("SELECT id FROM news_articles WHERE url = ?", (art_url,))
+            if cursor.fetchone() is None:
+                cursor.execute('''
+                    INSERT INTO news_articles (coin_id, title, description, source, url, published_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (coin_id, title, desc, source, art_url, pub_date_str))
+                
         conn.commit()
-        conn.close()
         print(f"Successfully saved {len(articles)} news articles for {coin_id}.")
         
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to fetch news data for {coin_id}: {e}")
+    except Exception as e:
+        print(f"Error parsing Google News RSS for {coin_id}: {e}")
+        
+    finally:
+        conn.close()
 
 def main():
     print("Starting data fetching pipeline...")
@@ -193,7 +215,7 @@ def main():
     print(f"Will fetch data for {len(coins_to_fetch)} coins.")
     
     for coin_id in coins_to_fetch:
-        fetch_market_data(coin_id, days=100) # Reduced to 100 days to avoid huge API loads
+        fetch_market_data(coin_id, days=1000) # Increased to 1000 days for better ML training
         fetch_news_data(coin_id)
         time.sleep(2)  # Basic rate limit sleep
         

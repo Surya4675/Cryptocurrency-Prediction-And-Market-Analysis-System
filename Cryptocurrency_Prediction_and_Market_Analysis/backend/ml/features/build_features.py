@@ -2,8 +2,9 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import os
+from backend.config import Config
 
-DB_PATH = "backend/database/app.db"
+DB_PATH = Config.DATABASE_PATH
 
 def load_market_data(coin_id):
     """Load market data from the database."""
@@ -27,12 +28,12 @@ def load_market_data(coin_id):
         return df
         
     # Convert timestamp to date and group by date (daily resolution)
-    df['date'] = pd.to_datetime(df['timestamp']).dt.date
+    df['date'] = pd.to_datetime(df['timestamp'], format='mixed', utc=True).dt.date
     # Take the last observation of the day
     df = df.groupby('date').last().reset_index()
     
     # Merge sentiment
-    sentiment_df['date'] = pd.to_datetime(sentiment_df['date']).dt.date
+    sentiment_df['date'] = pd.to_datetime(sentiment_df['date'], format='mixed', utc=True).dt.date
     df = pd.merge(df, sentiment_df, on='date', how='left')
     df['sentiment_score'] = df['sentiment_score'].fillna(0) # Neutral if no news
     
@@ -54,6 +55,7 @@ def generate_technical_features(df):
     
     # 3. Returns (1-day)
     df['return_1d'] = df['price'].pct_change(1)
+    df['log_return_1d'] = np.log(df['price'] / df['price'].shift(1))
     
     # 4. Volatility
     df['volatility_7'] = df['return_1d'].rolling(window=7).std()
@@ -79,19 +81,19 @@ def generate_technical_features(df):
     df['lag_7'] = df['price'].shift(7)
     
     # 8. Volume Change
-    df['volume_change'] = df['volume'].pct_change(1)
+    df['volume_change'] = df['volume'].pct_change(1).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
     # 9. Bollinger Bands
     df['bb_upper'] = df['sma_14'] + (df['price'].rolling(window=14).std() * 2)
     df['bb_lower'] = df['sma_14'] - (df['price'].rolling(window=14).std() * 2)
-    df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['sma_14']
+    df['bb_width'] = ((df['bb_upper'] - df['bb_lower']) / df['sma_14']).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
     # 10. Approximated ATR using Daily Price Range
     high_low = df['price'].rolling(window=2).max() - df['price'].rolling(window=2).min()
-    df['atr_14'] = high_low.rolling(window=14).mean()
+    df['atr_14'] = high_low.rolling(window=14).mean().fillna(0.0)
     
     # 11. 14-day momentum (return)
-    df['return_14d'] = df['price'].pct_change(14)
+    df['return_14d'] = df['price'].pct_change(14).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
     return df
 
@@ -100,8 +102,8 @@ def save_features(coin_id, df):
     conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()
     
-    # Drop rows with NaNs caused by rolling windows
-    df_clean = df.dropna().copy()
+    # Drop rows with NaNs caused by rolling windows, ensuring latest data is retained
+    df_clean = df.dropna(subset=['sma_7', 'return_1d']).replace([np.inf, -np.inf], 0.0).fillna(0.0).copy()
     
     count = 0
     for _, row in df_clean.iterrows():
@@ -110,19 +112,19 @@ def save_features(coin_id, df):
                 INSERT OR REPLACE INTO features (
                     coin_id, date, sma_7, sma_14, sma_30, ema_7, ema_14, 
                     rsi_14, macd, macd_signal, volatility_7, volatility_30, 
-                    return_1d, lag_1, lag_2, lag_3, lag_7, volume_change, sentiment_score,
-                    bb_upper, bb_lower, bb_width, atr_14, return_14d
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    return_1d, log_return_1d, lag_1, lag_2, lag_3, lag_7, volume_change, sentiment_score,
+                    bb_upper, bb_lower, bb_width, atr_14, return_14d, close_price
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 coin_id, str(row['date']), 
                 row['sma_7'], row['sma_14'], row['sma_30'], 
                 row['ema_7'], row['ema_14'], row['rsi_14'], 
                 row['macd'], row['macd_signal'], 
                 row['volatility_7'], row['volatility_30'], 
-                row['return_1d'], row['lag_1'], row['lag_2'], row['lag_3'], row['lag_7'], 
+                row['return_1d'], row['log_return_1d'], row['lag_1'], row['lag_2'], row['lag_3'], row['lag_7'], 
                 row['volume_change'], row.get('sentiment_score', 0),
                 row.get('bb_upper', 0), row.get('bb_lower', 0), row.get('bb_width', 0), 
-                row.get('atr_14', 0), row.get('return_14d', 0)
+                row.get('atr_14', 0), row.get('return_14d', 0), row['price']
             ))
             count += 1
         except Exception as e:
@@ -131,6 +133,28 @@ def save_features(coin_id, df):
     conn.commit()
     conn.close()
     print(f"Saved {count} feature records for {coin_id}.")
+
+def generate_features_for_coin(coin_id):
+    """Generates and saves features for a specific coin from market_prices or live chart data."""
+    df = load_market_data(coin_id)
+    if df.empty or len(df) < 7:
+        try:
+            from backend.services.market_data_service import fetch_chart_history
+            chart = fetch_chart_history(coin_id, 45)
+            if chart and len(chart) >= 7:
+                df = pd.DataFrame(chart)
+                df['date'] = pd.to_datetime(df['timestamp']).dt.date
+                df['price'] = pd.to_numeric(df['price'])
+                df['volume'] = pd.to_numeric(df['volume'])
+                df['sentiment_score'] = 0.05
+        except Exception as e:
+            print(f"Dynamic chart fetch for {coin_id}: {e}")
+            
+    if not df.empty and len(df) >= 7:
+        features_df = generate_technical_features(df)
+        save_features(coin_id, features_df)
+        return True
+    return False
 
 def main():
     print("Starting feature engineering pipeline...")

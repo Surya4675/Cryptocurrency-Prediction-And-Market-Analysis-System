@@ -9,20 +9,24 @@ from dotenv import load_dotenv
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("backend/fetch_live.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 
 load_dotenv()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY")
-DB_PATH = "backend/database/app.db"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(BASE_DIR, "backend", "database", "app.db")
+
+# Cache known coins in memory to avoid constant DB writes
+KNOWN_COINS = set()
 
 def fetch_top_1000_live():
     logging.info("Fetching top 1000 live prices from CoinGecko...")
     
-    headers = {"accept": "application/json"}
+    headers = {
+        "accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
     if COINGECKO_API_KEY and COINGECKO_API_KEY != "your_coingecko_api_key_here":
         headers["x-cg-demo-api-key"] = COINGECKO_API_KEY
 
@@ -33,13 +37,19 @@ def fetch_top_1000_live():
         logging.error(f"Database connection failed: {e}")
         return
 
+    # Load existing coins into memory cache on first run
+    if not KNOWN_COINS:
+        cursor.execute("SELECT coin_id FROM cryptocurrencies")
+        for row in cursor.fetchall():
+            KNOWN_COINS.add(row[0])
+
     dt_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     # Fetch 4 pages of 250 coins each = 1000 coins
     for page in range(1, 5):
         url = "https://api.coingecko.com/api/v3/coins/markets"
         params = {
-            "vs_currency": "usd",
+            "vs_currency": "inr",
             "order": "market_cap_desc",
             "per_page": 250,
             "page": page,
@@ -55,6 +65,9 @@ def fetch_top_1000_live():
                 response.raise_for_status()
                 data = response.json()
                 
+                new_coins = []
+                price_ticks = []
+                
                 for coin in data:
                     coin_id = coin.get("id")
                     symbol = coin.get("symbol")
@@ -63,20 +76,29 @@ def fetch_top_1000_live():
                     volume = coin.get("total_volume")
                     market_cap = coin.get("market_cap")
                     
-                    # Upsert into cryptocurrencies so the UI dropdown can see it
-                    cursor.execute('''
-                        INSERT OR IGNORE INTO cryptocurrencies (coin_id, symbol, name, is_active)
-                        VALUES (?, ?, ?, 1)
-                    ''', (coin_id, symbol, name))
+                    # Only append to new_coins if it's completely new
+                    if coin_id not in KNOWN_COINS:
+                        new_coins.append((coin_id, symbol, name))
+                        KNOWN_COINS.add(coin_id)
                     
                     if price:
-                        # Insert the live price tick
-                        cursor.execute('''
-                            INSERT OR IGNORE INTO market_prices (coin_id, timestamp, close, price, volume, market_cap, source)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ''', (coin_id, dt_str, price, price, volume, market_cap, "coingecko_live"))
+                        price_ticks.append((coin_id, dt_str, price, price, volume, market_cap, "coingecko_live"))
+                
+                # 1. Batch insert new coins (if any)
+                if new_coins:
+                    cursor.executemany('''
+                        INSERT OR IGNORE INTO cryptocurrencies (coin_id, symbol, name, is_active)
+                        VALUES (?, ?, ?, 1)
+                    ''', new_coins)
+                
+                # 2. Batch insert all 250 price ticks in one fast transaction
+                if price_ticks:
+                    cursor.executemany('''
+                        INSERT OR IGNORE INTO market_prices (coin_id, timestamp, close, price, volume, market_cap, source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', price_ticks)
                         
-                logging.info(f"Page {page} successfully processed.")
+                logging.info(f"Page {page} successfully processed. ({len(price_ticks)} ticks saved)")
                 
                 # Respect rate limits, especially on free tier
                 time.sleep(2)

@@ -4,15 +4,15 @@ import { MessageCircle, ThumbsUp, ThumbsDown, Minus } from 'lucide-react';
 const SentimentCard = ({ sentiment }) => {
   if (!sentiment) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-center opacity-70">
+      <div className="h-full flex flex-col items-center justify-center text-center opacity-70 px-4 py-8">
         <MessageCircle className="w-8 h-8 text-gray-500 mb-2" />
         <h3 className="text-gray-300 font-medium">No Sentiment Data</h3>
-        <p className="text-xs text-gray-500 mt-1 max-w-[200px]">Not enough news articles available to analyze sentiment.</p>
+        <p className="text-xs text-gray-500 mt-1 max-w-[250px]">Sentiment analysis and news scoring are not currently available for this asset.</p>
       </div>
     );
   }
 
-  const { positive_score, neutral_score, negative_score, source_breakdown } = sentiment;
+  const { positive_score, negative_score, source_breakdown } = sentiment;
   
   // Calculate a continuous score between -1 and 1 based on positive vs negative
   const rawScore = (positive_score || 0) - (negative_score || 0);

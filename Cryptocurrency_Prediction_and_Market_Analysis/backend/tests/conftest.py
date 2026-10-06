@@ -1,17 +1,16 @@
 import pytest
-import sqlite3
-import os
 from backend.app import create_app
+from backend.config import Config
 from backend.models.db_models import db
+
+class TestConfig(Config):
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
 
 @pytest.fixture
 def app():
-    # Setup a test application
-    app = create_app()
-    app.config.update({
-        "TESTING": True,
-        "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
-    })
+    # Setup an isolated test application using an in-memory database
+    app = create_app(TestConfig)
     
     with app.app_context():
         db.create_all()

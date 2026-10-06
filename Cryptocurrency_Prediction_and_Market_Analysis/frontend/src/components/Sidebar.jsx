@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, TrendingUp, Newspaper, Settings, Layers, DollarSign } from 'lucide-react';
+import { LayoutDashboard, TrendingUp, Newspaper, Layers, ShieldCheck } from 'lucide-react';
 import { useCurrency } from '../context/CurrencyContext';
 
 const Sidebar = () => {
@@ -30,23 +30,26 @@ const Sidebar = () => {
         </NavLink>
       </nav>
 
-      <div className="p-4 border-t border-gray-800 space-y-2">
-        <div className="flex items-center w-full px-4 py-2 bg-gray-900 rounded-lg border border-gray-800">
+      <div className="p-4 border-t border-gray-800/80 space-y-3">
+        <div className="flex items-center w-full px-3 py-2 bg-[#090d16] rounded-lg border border-gray-800">
           <span className="text-gray-400 font-bold mr-2 text-sm">{currency === 'USD' ? '$' : currency === 'INR' ? '₹' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : currency === 'JPY' ? '¥' : '¤'}</span>
           <select 
             value={currency} 
             onChange={(e) => setCurrency(e.target.value)}
-            className="bg-transparent text-gray-300 outline-none w-full cursor-pointer text-sm font-medium"
+            className="bg-transparent text-gray-300 outline-none w-full cursor-pointer text-xs font-semibold"
           >
             {currencies.map(c => (
               <option key={c} value={c} className="bg-gray-900">{c}</option>
             ))}
           </select>
         </div>
-        <button className="flex items-center w-full px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800/50 rounded-lg transition-colors">
-          <Settings className="w-5 h-5 mr-3" />
-          Settings
-        </button>
+        <div className="flex items-center justify-between text-[11px] text-gray-400 px-1 font-mono">
+          <span className="flex items-center">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+            Live Sync v2.4
+          </span>
+          <span className="text-gray-400">1,000 Assets</span>
+        </div>
       </div>
     </aside>
   );

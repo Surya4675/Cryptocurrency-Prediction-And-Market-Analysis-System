@@ -46,8 +46,9 @@ client.interceptors.response.use(
 
 export const marketApi = {
   getCoins: () => client.get('/market/coins'),
-  getSummary: () => client.get('/market/summary'),
+  getSummary: (params = {}) => client.get('/market/summary', { params }),
   getHistory: (coinId, days = 30) => client.get(`/market/${coinId}/history?days=${days}`),
+  getStats: (coinId) => client.get(`/market/${coinId}/stats`),
 };
 
 export const predictionApi = {
