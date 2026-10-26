@@ -122,6 +122,17 @@ const PriceHistoryStats = ({
 
   const logoSrc = getCoinLogo(stats?.symbol || coinId, coinId, stats?.image);
 
+  // Clean formatter to ensure High/Low, Spot Price, and ATH align seamlessly across all timeframes (24H, 7D, 1M, 3M, 1Y)
+  const formatStatPrice = (amount) => {
+    if (amount === null || amount === undefined || isNaN(amount)) return '—';
+    const num = Number(amount);
+    // For large values >= 1,000 (like Bitcoin, Ethereum in INR or USD), round to integer so 7D, 1M, 3M, 1Y match 24H
+    if (Math.abs(num) >= 1000) {
+      return formatPrice(Math.round(num));
+    }
+    return formatPrice(num);
+  };
+
   return (
     <div className="flex flex-col mb-4">
       {/* Header with Title and Timeframe Filter */}
@@ -167,14 +178,14 @@ const PriceHistoryStats = ({
       </div>
       
       {/* Clean Metrics Summary Row (Aligned within div without overlap) */}
-      <div className="grid grid-cols-2 md:grid-cols-[1fr_0.85fr_1.45fr_1.1fr] gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 bg-[#090d16] border border-slate-800/90 rounded-xl items-center">
+      <div className="grid grid-cols-2 md:grid-cols-[1fr_0.75fr_1.65fr_1fr] gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 bg-[#090d16] border border-slate-800/90 rounded-xl items-center">
         {/* 1. Spot Price */}
         <div className="flex flex-col min-w-0">
           <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 truncate">
             Spot Price
           </span>
           <span className="text-base sm:text-lg font-bold font-mono text-white tracking-tight truncate">
-            {displayCurrentPrice ? formatPrice(displayCurrentPrice) : '—'}
+            {displayCurrentPrice ? formatStatPrice(displayCurrentPrice) : '—'}
           </span>
         </div>
         
@@ -201,13 +212,13 @@ const PriceHistoryStats = ({
           <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 truncate">
             {currentRangeLabel} High / Low
           </span>
-          <div className="flex items-center gap-1.5 font-mono text-xs sm:text-sm md:text-base font-bold tracking-tight whitespace-nowrap">
-            <span className="text-emerald-400">
-              {displayHigh ? formatPrice(displayHigh) : '—'}
+          <div className="flex items-center gap-1 sm:gap-1.5 font-mono text-xs sm:text-[13px] lg:text-sm font-bold tracking-tight whitespace-nowrap overflow-hidden">
+            <span className="text-emerald-400 truncate">
+              {displayHigh ? formatStatPrice(displayHigh) : '—'}
             </span>
-            <span className="text-slate-500 font-sans text-xs">/</span>
-            <span className="text-rose-400">
-              {displayLow ? formatPrice(displayLow) : '—'}
+            <span className="text-slate-500 font-sans text-xs shrink-0">/</span>
+            <span className="text-rose-400 truncate">
+              {displayLow ? formatStatPrice(displayLow) : '—'}
             </span>
           </div>
         </div>
@@ -218,7 +229,7 @@ const PriceHistoryStats = ({
             All-Time High (ATH)
           </span>
           <span className="text-base sm:text-lg font-mono font-bold text-white tracking-tight truncate">
-            {stats?.ath ? formatPrice(stats.ath) : '—'}
+            {stats?.ath ? formatStatPrice(stats.ath) : '—'}
           </span>
         </div>
       </div>
