@@ -12,7 +12,7 @@ MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 FALLBACK_FEATURES = [
     'sma_7', 'sma_14', 'sma_30', 'ema_7', 'ema_14', 'rsi_14', 
     'macd', 'macd_signal', 'volatility_7', 'volatility_30', 
-    'return_1d', 'lag_1', 'lag_2', 'lag_3', 'lag_7', 'volume_change',
+    'return_1d', 'log_return_1d', 'lag_1', 'lag_2', 'lag_3', 'lag_7', 'volume_change',
     'bb_upper', 'bb_lower', 'bb_width', 'atr_14', 'return_14d', 'sentiment_score'
 ]
 
@@ -30,7 +30,8 @@ def explain_prediction(coin_id, prediction_id):
         print(f"No model found for {coin_id} at {model_path}.")
         return False
         
-    model = joblib.load(model_path)
+    from backend.ml.inference.predict import get_cached_joblib
+    model = get_cached_joblib(model_path)
     booster = model.get_booster() if hasattr(model, 'get_booster') else model
     
     # 2. Load latest features for this coin
@@ -66,7 +67,7 @@ def explain_prediction(coin_id, prediction_id):
     else:
         features_path = os.path.join(MODEL_DIR, "global_features.joblib")
         if os.path.exists(features_path):
-            features = joblib.load(features_path)
+            features = get_cached_joblib(features_path)
         else:
             features = FALLBACK_FEATURES
             

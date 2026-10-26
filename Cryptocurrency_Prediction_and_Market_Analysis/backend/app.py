@@ -1,4 +1,5 @@
-from flask import Flask, jsonify
+import os
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_caching import Cache
 from .config import Config
@@ -8,7 +9,12 @@ from .models.db_models import db
 cache = Cache()
 
 def create_app(config_class=Config):
-    app = Flask(__name__)
+    frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist'))
+    app = Flask(
+        __name__,
+        static_folder=os.path.join(frontend_dist, 'assets') if os.path.exists(os.path.join(frontend_dist, 'assets')) else None,
+        static_url_path='/assets'
+    )
     app.config.from_object(config_class)
     
     # Configure Cache
@@ -44,6 +50,18 @@ def create_app(config_class=Config):
     from .utils.error_handlers import register_error_handlers
     register_error_handlers(app)
     
+    # Serve SPA Frontend in production if built
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_frontend(path):
+        if path.startswith('api/'):
+            return jsonify({'error': 'Endpoint not found', 'status': 404}), 404
+        if path != "" and os.path.exists(os.path.join(frontend_dist, path)):
+            return send_from_directory(frontend_dist, path)
+        if os.path.exists(os.path.join(frontend_dist, 'index.html')):
+            return send_from_directory(frontend_dist, 'index.html')
+        return jsonify({"message": "Cryptocurrency API is running", "status": "online"}), 200
+
     return app
 
 if __name__ == '__main__':

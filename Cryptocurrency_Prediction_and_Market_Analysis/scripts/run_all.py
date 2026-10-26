@@ -18,7 +18,7 @@ def run_command(command, cwd=None, wait=False, env=None):
         process.wait()
     return process
 
-def background_worker(project_dir):
+def background_worker(project_dir, env=None):
     """
     Background worker thread that periodically checks historical features
     and maintains the established daily ML prediction session.
@@ -29,13 +29,13 @@ def background_worker(project_dir):
     while True:
         try:
             print("\n[Worker] Validating ML Pipeline for active coins...")
-            run_command(f'"{sys.executable}" backend/data/update_pipeline.py', cwd=project_dir, wait=True)
+            run_command(f'"{sys.executable}" backend/data/update_pipeline.py', cwd=project_dir, wait=True, env=env)
         except Exception as e:
             print(f"\n[Worker] Error during ML update cycle: {e}")
             
         time.sleep(3600) # Stable 1-hour interval for 24h forecasting
 
-def live_price_worker(project_dir):
+def live_price_worker(project_dir, env=None):
     """
     Background worker that fetches live tick data every 60 seconds
     for the "active always" UI experience.
@@ -45,7 +45,7 @@ def live_price_worker(project_dir):
     
     while True:
         try:
-            run_command(f'"{sys.executable}" scripts/fetch_live.py', cwd=project_dir, wait=True)
+            run_command(f'"{sys.executable}" scripts/fetch_live.py', cwd=project_dir, wait=True, env=env)
         except Exception as e:
             print(f"\n[Live Worker] Error: {e}")
             
@@ -62,6 +62,7 @@ def main():
     print("\n[1] Starting Backend API on port 5000...")
     env = os.environ.copy()
     env["FLASK_APP"] = "backend.app:create_app"
+    env["PYTHONPATH"] = project_dir
     backend_process = run_command(backend_cmd, cwd=project_dir, env=env)
     
     time.sleep(2)
@@ -72,10 +73,10 @@ def main():
     frontend_process = run_command(frontend_cmd, cwd=frontend_dir)
     
     print("\n[3] Starting Background Engines...")
-    live_thread = threading.Thread(target=live_price_worker, args=(project_dir,), daemon=True)
+    live_thread = threading.Thread(target=live_price_worker, args=(project_dir, env), daemon=True)
     live_thread.start()
     
-    ml_thread = threading.Thread(target=background_worker, args=(project_dir,), daemon=True)
+    ml_thread = threading.Thread(target=background_worker, args=(project_dir, env), daemon=True)
     ml_thread.start()
     
     print("\n=== System is fully running ===")

@@ -12,7 +12,7 @@ const PriceHistoryStats = ({
   historyData = [],
   initialStats = null
 }) => {
-  const { formatPrice } = useCurrency();
+  const { formatPrice, formatCompactPrice, currency } = useCurrency();
   const [stats, setStats] = useState(initialStats);
   const [loading, setLoading] = useState(!initialStats);
 
@@ -26,7 +26,7 @@ const PriceHistoryStats = ({
   const fetchStats = async () => {
     if (!coinId) return;
     try {
-      const response = await marketApi.getStats(coinId);
+      const response = await marketApi.getStats(coinId, currency);
       if (response.data) {
         setStats(response.data);
       }
@@ -40,10 +40,10 @@ const PriceHistoryStats = ({
   useEffect(() => {
     if (!initialStats) setLoading(true);
     fetchStats();
-    // Poll stats every 15 seconds
-    const interval = setInterval(fetchStats, 15000);
+    // Poll stats every 20 seconds
+    const interval = setInterval(fetchStats, 20000);
     return () => clearInterval(interval);
-  }, [coinId]);
+  }, [coinId, currency]);
 
   const ranges = [
     { label: '24H', value: 1 },
@@ -113,6 +113,13 @@ const PriceHistoryStats = ({
     return dynamicStats?.changePercentage ?? 0;
   }, [timeRange, stats, dynamicStats]);
 
+  // CoinGecko 24h Range Bar calculation
+  const rangePercent = useMemo(() => {
+    if (!displayCurrentPrice || !displayHigh || !displayLow || displayHigh === displayLow) return 50;
+    const pct = ((displayCurrentPrice - displayLow) / (displayHigh - displayLow)) * 100;
+    return Math.min(100, Math.max(0, pct));
+  }, [displayCurrentPrice, displayHigh, displayLow]);
+
   const logoSrc = getCoinLogo(stats?.symbol || coinId, coinId, stats?.image);
 
   return (
@@ -129,8 +136,11 @@ const PriceHistoryStats = ({
               e.currentTarget.src = getFallbackCoinLogo(coinId);
             }}
           />
-          <h2 className="text-xl font-bold text-white capitalize tracking-tight">
-            {coinName} Price Action
+          <h2 className="text-xl font-bold text-white capitalize tracking-tight flex items-center gap-2">
+            <span>{coinName}</span>
+            <span className="text-xs uppercase font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-bold">
+              {stats?.symbol || coinId.slice(0, 4)}
+            </span>
           </h2>
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
@@ -138,16 +148,16 @@ const PriceHistoryStats = ({
           </span>
         </div>
 
-        {/* Timeframe Controls */}
-        <div className="flex bg-[#070b13] rounded-lg p-1 border border-gray-800">
+        {/* Timeframe Controls (CoinGecko Style) */}
+        <div className="flex bg-[#070b13] rounded-lg p-1 border border-slate-800 shadow-xs">
           {ranges.map((range) => (
             <button
               key={range.value}
               onClick={() => setTimeRange(range.value)}
               className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
                 timeRange === range.value 
-                  ? 'bg-blue-600 text-white shadow-sm' 
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  ? 'bg-blue-600 text-white shadow-sm font-bold' 
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
               }`}
             >
               {range.label}
@@ -156,50 +166,58 @@ const PriceHistoryStats = ({
         </div>
       </div>
       
-      {/* 4 Spacious Clean Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3.5 bg-[#090d16] border border-gray-800/80 rounded-xl">
-        {/* Spot Price */}
-        <div className="flex flex-col">
-          <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-0.5">
+      {/* Clean Metrics Summary Row (Aligned within div without overlap) */}
+      <div className="grid grid-cols-2 md:grid-cols-[1fr_0.85fr_1.45fr_1.1fr] gap-3 sm:gap-4 px-4 sm:px-5 py-3.5 bg-[#090d16] border border-slate-800/90 rounded-xl items-center">
+        {/* 1. Spot Price */}
+        <div className="flex flex-col min-w-0">
+          <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 truncate">
             Spot Price
           </span>
-          <span className="text-xl font-extrabold font-mono text-white tracking-tight">
+          <span className="text-base sm:text-lg font-bold font-mono text-white tracking-tight truncate">
             {displayCurrentPrice ? formatPrice(displayCurrentPrice) : '—'}
           </span>
         </div>
         
-        {/* Performance Return */}
-        <div className="flex flex-col">
-          <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-0.5">
+        {/* 2. Return */}
+        <div className="flex flex-col min-w-0">
+          <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 truncate">
             {currentRangeLabel} Return
           </span>
-          <span className={`text-base font-extrabold font-mono flex items-center ${
-            displayChange > 0 ? 'text-emerald-400' : displayChange < 0 ? 'text-rose-400' : 'text-gray-400'
+          <span className={`text-base sm:text-lg font-bold font-mono tracking-tight truncate ${
+            displayChange > 0 
+              ? 'text-emerald-400' 
+              : displayChange < 0 
+              ? 'text-rose-400' 
+              : 'text-slate-300'
           }`}>
             {displayChange !== undefined && displayChange !== null
               ? `${displayChange > 0 ? '+' : ''}${displayChange.toFixed(2)}%`
-              : '—'}
+              : '0.00%'}
           </span>
         </div>
         
-        {/* Range High / Low */}
-        <div className="flex flex-col">
-          <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-0.5">
+        {/* 3. High / Low */}
+        <div className="flex flex-col min-w-0">
+          <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 truncate">
             {currentRangeLabel} High / Low
           </span>
-          <div className="text-xs font-mono text-gray-300">
-            <span className="text-emerald-400">{displayHigh ? formatPrice(displayHigh) : '—'}</span>
-            <span className="text-gray-400 mx-1">/</span>
-            <span className="text-rose-400">{displayLow ? formatPrice(displayLow) : '—'}</span>
+          <div className="flex items-center gap-1.5 font-mono text-xs sm:text-sm md:text-base font-bold tracking-tight whitespace-nowrap">
+            <span className="text-emerald-400">
+              {displayHigh ? formatPrice(displayHigh) : '—'}
+            </span>
+            <span className="text-slate-500 font-sans text-xs">/</span>
+            <span className="text-rose-400">
+              {displayLow ? formatPrice(displayLow) : '—'}
+            </span>
           </div>
         </div>
         
-        {/* All-Time High */}
-        <div className="flex flex-col">
-          <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold mb-0.5">
+        {/* 4. All-Time High */}
+        <div className="flex flex-col min-w-0">
+          <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 truncate">
             All-Time High (ATH)
           </span>
-          <span className="text-sm font-mono font-semibold text-gray-300">
+          <span className="text-base sm:text-lg font-mono font-bold text-white tracking-tight truncate">
             {stats?.ath ? formatPrice(stats.ath) : '—'}
           </span>
         </div>

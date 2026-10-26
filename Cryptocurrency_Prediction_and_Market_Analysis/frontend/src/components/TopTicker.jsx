@@ -5,12 +5,12 @@ import { useCurrency } from '../context/CurrencyContext';
 import { getCoinLogo, getFallbackCoinLogo } from '../utils/coinLogos';
 
 const TopTicker = () => {
-  const { formatPrice } = useCurrency();
+  const { formatPrice, currency } = useCurrency();
   const [tickerCoins, setTickerCoins] = useState([]);
 
   const fetchTopCoins = async () => {
     try {
-      const response = await marketApi.getSummary({ limit: 20 });
+      const response = await marketApi.getSummary({ limit: 20, currency: currency.toLowerCase() });
       if (response.data && response.data.coins) {
         setTickerCoins(response.data.coins.slice(0, 15));
       }
@@ -23,12 +23,12 @@ const TopTicker = () => {
     fetchTopCoins();
     const interval = setInterval(fetchTopCoins, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currency]);
 
   if (tickerCoins.length === 0) return null;
 
   return (
-    <div className="bg-[#0a0e17] border-b border-slate-800/60 py-1.5 overflow-hidden sticky top-0 z-10 hidden sm:block shadow-[0_4px_20px_-10px_rgba(0,0,0,0.6)]">
+    <div className="bg-[#0d121f] border-b border-slate-800/80 py-1.5 overflow-hidden sticky top-0 z-10 hidden sm:block">
       <div className="flex animate-marquee whitespace-nowrap items-center">
         {/* Duplicate the array to make the marquee seamless */}
         {[...tickerCoins, ...tickerCoins, ...tickerCoins].map((coin, index) => {
@@ -41,15 +41,15 @@ const TopTicker = () => {
               <img 
                 src={logoSrc} 
                 alt={coin.symbol} 
-                className="w-4 h-4 rounded-full object-contain mr-1.5 bg-slate-900 border border-slate-700/50 shadow-sm"
+                className="w-4 h-4 rounded-full object-contain mr-1.5 bg-slate-900 border border-slate-700/60 p-0.5"
                 onError={(e) => {
                   e.currentTarget.onerror = null;
                   e.currentTarget.src = getFallbackCoinLogo(coin.symbol);
                 }}
               />
-              <span className="font-bold text-gray-300 mr-2 text-xs">{(coin.symbol || '').toUpperCase()}</span>
-              <span className="text-white font-mono text-xs">{formatPrice(coin.current_price)}</span>
-              <span className={`ml-2 flex items-center text-xs font-mono font-medium ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+              <span className="font-bold text-slate-300 mr-2 text-xs">{(coin.symbol || '').toUpperCase()}</span>
+              <span className="text-white font-mono text-xs font-semibold">{formatPrice(coin.current_price)}</span>
+              <span className={`ml-2 flex items-center text-xs font-mono font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {isPositive ? <TrendingUp className="w-3 h-3 mr-0.5" /> : <TrendingDown className="w-3 h-3 mr-0.5" />}
                 {isPositive ? '+' : ''}{change.toFixed(2)}%
               </span>

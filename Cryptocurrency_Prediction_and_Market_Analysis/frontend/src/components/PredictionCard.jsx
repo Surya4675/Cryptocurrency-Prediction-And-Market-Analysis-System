@@ -4,13 +4,11 @@ import {
   TrendingUp, 
   TrendingDown, 
   Activity, 
-  AlertTriangle, 
   ShieldCheck, 
   Sparkles, 
-  CheckCircle2,
-  Gauge,
-  SlidersHorizontal,
-  ArrowRight
+  CheckCircle2, 
+  ArrowRight,
+  Lock
 } from 'lucide-react';
 
 const PredictionCard = ({ prediction, livePrice, timeRemaining = 0 }) => {
@@ -19,39 +17,41 @@ const PredictionCard = ({ prediction, livePrice, timeRemaining = 0 }) => {
   if (!prediction && timeRemaining <= 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center px-4 py-8">
-        <div className="relative mb-4">
-          <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full"></div>
-          <Activity className="w-10 h-10 text-blue-400 relative animate-pulse" />
-        </div>
-        <h3 className="text-gray-100 font-semibold text-lg mb-2">Syncing Prediction Engine</h3>
-        <p className="text-sm text-gray-400 max-w-[260px] leading-relaxed">
+        <Activity className="w-8 h-8 text-blue-400 mb-2 animate-pulse" />
+        <h3 className="text-white font-semibold text-base mb-1">Syncing Prediction Engine</h3>
+        <p className="text-xs text-slate-400 max-w-[240px]">
           Retrieving real-time market features and model weights.
         </p>
       </div>
     );
   }
 
-  const currentPrice = livePrice || prediction?.current_price || 100;
-  const returnRate = prediction?.predicted_return !== undefined ? prediction.predicted_return : 0.0174;
-  const targetPrice = livePrice && prediction?.predicted_return !== undefined
-    ? Math.round(livePrice * (1 + returnRate))
-    : (prediction?.predicted_price || Math.round(currentPrice * (1 + returnRate)));
+  // 1. Fixed Target Price (Never fluctuates with live price ticks)
+  const targetPrice = prediction?.predicted_price !== undefined && prediction?.predicted_price !== null
+    ? Number(prediction.predicted_price)
+    : (prediction?.base_price 
+        ? Number(prediction.base_price) * (1 + (prediction?.predicted_return || 0.0174))
+        : (livePrice ? Number(livePrice) * 1.018 : 100));
 
-  const isUp = targetPrice >= currentPrice;
+  // 2. Fixed Base Anchor Price and Trend Direction
+  const basePrice = Number(prediction?.base_price || prediction?.current_price || targetPrice);
+  const isUp = prediction?.direction === 'BULLISH' || targetPrice >= basePrice;
   const changePercent = prediction?.predicted_return_pct !== undefined 
     ? prediction.predicted_return_pct 
-    : (returnRate * 100);
+    : (((targetPrice - basePrice) / (basePrice || 1)) * 100);
   
   const confidencePct = prediction?.confidence_pct || Math.round((prediction?.confidence || 0.91) * 100);
 
-  // Dynamic Corridor Bounds anchored directly to current spot and target
-  const spreadPct = prediction?.range_spread_pct ? (prediction.range_spread_pct / 200) : 0.018;
-  const rangeLow = Math.round(targetPrice * (1.0 - spreadPct));
-  const rangeHigh = Math.round(targetPrice * (1.0 + spreadPct));
-  const rangeLowPct = (((rangeLow - currentPrice) / currentPrice) * 100);
-  const rangeHighPct = (((rangeHigh - currentPrice) / currentPrice) * 100);
+  // 3. Fixed Corridor Bounds (Floor Support & Ceiling Resistance locked for the day)
+  const rangeLow = prediction?.range_low !== undefined && prediction?.range_low !== null
+    ? Number(prediction.range_low)
+    : (targetPrice * 0.975);
 
-  // Calculate percentage position of target price inside the corridor
+  const rangeHigh = prediction?.range_high !== undefined && prediction?.range_high !== null
+    ? Number(prediction.range_high)
+    : (targetPrice * 1.025);
+
+  const effectiveSpot = livePrice || basePrice || targetPrice;
   const corridorSpan = Math.max(1, rangeHigh - rangeLow);
   const targetPositionPct = Math.min(92, Math.max(8, ((targetPrice - rangeLow) / corridorSpan) * 100));
 
@@ -68,110 +68,94 @@ const PredictionCard = ({ prediction, livePrice, timeRemaining = 0 }) => {
         {/* Card Header */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center space-x-2">
-            <div className="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20">
-              <Sparkles className="w-4 h-4 text-purple-400" />
+            <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+              <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white tracking-wide uppercase">24H AI PREDICTION</h3>
-              <div className="flex items-center text-[10px] text-gray-400">
-                <ShieldCheck className="w-3 h-3 mr-1 text-emerald-400" />
-                Real-Time Live Verified
+              <h3 className="text-xs font-bold text-white tracking-wide uppercase">24H AI PREDICTION</h3>
+              <div className="flex items-center text-[10px] text-slate-400">
+                <Lock className="w-3 h-3 mr-1 text-blue-400" />
+                Session Locked {prediction?.lock_timer_label ? `(${prediction.lock_timer_label})` : ''}
               </div>
             </div>
           </div>
-          <div className="flex items-center px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold font-mono">
+          <div className="flex items-center px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold font-mono">
             <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-            {confidencePct}% Confidence
+            {confidencePct}% Conf
           </div>
         </div>
 
         {/* Big Verdict Hero Box */}
-        <div className={`p-4 rounded-xl border mb-4 transition-all duration-300 relative overflow-hidden ${
+        <div className={`p-4 rounded-xl border mb-4 transition-all duration-200 ${
           isUp 
-            ? 'bg-gradient-to-br from-emerald-950/40 via-[#0d171e]/70 to-[#0a0e17] border-emerald-500/30 shadow-[0_4px_25px_-5px_rgba(16,185,129,0.15)]' 
-            : 'bg-gradient-to-br from-rose-950/40 via-[#170e14]/70 to-[#0a0e17] border-rose-500/30 shadow-[0_4px_25px_-5px_rgba(244,63,94,0.15)]'
+            ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400' 
+            : 'bg-rose-950/20 border-rose-500/30 text-rose-400'
         }`}>
-          <div className="flex items-center justify-between mb-2">
-            <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold uppercase tracking-wider ${
-              isUp ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
-            }`}>
-              {isUp ? <TrendingUp className="w-4 h-4 mr-1.5" /> : <TrendingDown className="w-4 h-4 mr-1.5" />}
-              {isUp ? 'Expected to Rise' : 'Expected to Dip'}
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-mono uppercase tracking-wider font-bold">
+              {isUp ? 'BULLISH REBOUND EXPECTED' : 'BEARISH PULLBACK EXPECTED'}
             </span>
-            <span className={`text-base font-bold font-mono ${isUp ? 'text-emerald-400' : 'text-rose-400'}`}>
+            <span className="font-mono font-bold text-xs flex items-center">
+              {isUp ? <TrendingUp className="w-3.5 h-3.5 mr-0.5" /> : <TrendingDown className="w-3.5 h-3.5 mr-0.5" />}
               {isUp ? '+' : ''}{changePercent.toFixed(2)}%
             </span>
           </div>
 
-          <div className="mt-2.5">
-            <div className="text-[11px] uppercase tracking-wider text-gray-400 font-medium">
-              Most Likely Target Price Tomorrow
-            </div>
-            <div className="text-3xl font-extrabold font-mono text-white tracking-tight mt-0.5">
+          <div className="flex items-baseline space-x-2">
+            <span className="text-2xl font-extrabold font-mono text-white tracking-tight">
               {formatPrice(targetPrice)}
-            </div>
-          </div>
-        </div>
-
-        {/* Prediction Range Corridor (Requested Feature) */}
-        <div className="bg-[#0c121e] border border-blue-500/20 rounded-xl p-4 mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-bold text-gray-200 flex items-center">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-blue-400 mr-1.5" />
-              Expected 24H Price Range
-            </div>
-            <span className="text-[10px] font-mono font-bold text-blue-300 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
-              95% Probability Corridor
+            </span>
+            <span className="text-xs text-slate-400 font-mono">
+              (from {formatPrice(basePrice)})
             </span>
           </div>
+        </div>
 
-          {/* Visual Track Gauge */}
-          <div className="my-3">
-            <div className="relative h-2.5 bg-gray-800 rounded-full overflow-visible">
-              {/* Range background bar */}
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-500/40 via-purple-500/50 to-emerald-500/40 rounded-full"></div>
-              
-              {/* Target pin marker */}
-              <div 
-                className="absolute -top-1.5 -translate-x-1/2 flex flex-col items-center z-10 transition-all duration-700"
-                style={{ left: `${targetPositionPct}%` }}
-              >
-                <div className="w-3.5 h-3.5 rounded-full bg-white shadow-[0_0_10px_#fff] border-2 border-purple-600"></div>
-              </div>
+        {/* Prediction Corridor Floor / Ceiling */}
+        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2 mb-3">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-1.5 text-slate-300 font-semibold">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>Safe Forecast Corridor</span>
             </div>
+            <span className="text-[10px] text-slate-500 font-mono">Fixed Support / Resistance</span>
           </div>
 
-          {/* Range Low & High Numbers */}
-          <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-gray-800/60 text-xs">
-            <div className="flex flex-col">
-              <span className="text-[10px] text-gray-400 uppercase font-medium">Support (Floor)</span>
-              <span className="font-mono font-bold text-gray-200">{formatPrice(rangeLow)}</span>
-              <span className="text-[10px] font-mono text-gray-400">
-                {rangeLowPct > 0 ? '+' : ''}{rangeLowPct.toFixed(2)}% vs Spot
-              </span>
+          {/* Progress Bar Corridor */}
+          <div className="relative pt-1">
+            <div className="h-2 rounded-full bg-slate-800 overflow-hidden relative">
+              <div 
+                className="absolute top-0 bottom-0 bg-blue-600 rounded-full"
+                style={{ width: `${targetPositionPct}%` }}
+              ></div>
             </div>
-            <div className="flex flex-col text-right">
-              <span className="text-[10px] text-gray-400 uppercase font-medium">Resistance (Ceiling)</span>
-              <span className="font-mono font-bold text-gray-200">{formatPrice(rangeHigh)}</span>
-              <span className="text-[10px] font-mono text-gray-400">
-                {rangeHighPct > 0 ? '+' : ''}{rangeHighPct.toFixed(2)}% vs Spot
-              </span>
+            <div 
+              className="absolute top-0.5 -translate-x-1/2 w-2 h-2 rounded-full bg-white shadow-sm"
+              style={{ left: `${targetPositionPct}%` }}
+            ></div>
+          </div>
+
+          <div className="flex justify-between items-center text-[11px] font-mono pt-0.5">
+            <div className="text-slate-400">
+              <span className="text-[10px] text-slate-500 block">Support Floor</span>
+              <span className="text-slate-200 font-bold">{formatPrice(rangeLow)}</span>
+            </div>
+            <div className="text-right text-slate-400">
+              <span className="text-[10px] text-slate-500 block">Ceiling Resistance</span>
+              <span className="text-slate-200 font-bold">{formatPrice(rangeHigh)}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Footer & Link to SHAP */}
-      <div className="pt-2 border-t border-gray-800/60">
-        <button
-          onClick={scrollToShap}
-          className="w-full flex items-center justify-center space-x-2 py-2.5 px-3 rounded-lg bg-purple-600/10 hover:bg-purple-600/20 border border-purple-500/20 text-purple-300 hover:text-purple-200 text-xs font-semibold transition-all group shadow-sm"
-        >
-          <Sparkles className="w-4 h-4 text-purple-400 group-hover:rotate-12 transition-transform" />
-          <span>SHAP Feature Attribution (23 Signals)</span>
-          <ArrowRight className="w-3.5 h-3.5 text-purple-400 group-hover:translate-x-1 transition-transform" />
-        </button>
-      </div>
+      {/* Footer Link to Explainability */}
+      <button
+        onClick={scrollToShap}
+        className="w-full flex items-center justify-between p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800 text-xs text-slate-300 font-semibold border border-slate-800 transition-colors"
+      >
+        <span>Why this prediction? View SHAP Factor Drivers</span>
+        <ArrowRight className="w-3.5 h-3.5 text-blue-400" />
+      </button>
     </div>
   );
 };

@@ -4,7 +4,7 @@ import { ExternalLink, Globe, Clock, TrendingUp, TrendingDown, Minus } from 'luc
 const NewsList = ({ news }) => {
   if (!news || news.length === 0) {
     return (
-      <div className="text-gray-400 py-10 text-center font-medium bg-[#0a0e17] rounded-xl border border-gray-800">
+      <div className="text-slate-400 py-10 text-center font-medium bg-slate-900/40 rounded-xl border border-slate-800">
         No recent news articles found for this asset.
       </div>
     );
@@ -53,11 +53,11 @@ const NewsList = ({ news }) => {
             href={item.url} 
             target="_blank" 
             rel="noopener noreferrer"
-            className="group flex flex-col justify-between bg-[#0a0e17] border border-gray-800 hover:border-blue-500/50 rounded-xl p-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_20px_rgba(59,130,246,0.1)]"
+            className="group flex flex-col justify-between bg-slate-900/70 border border-slate-800/90 hover:border-slate-700 rounded-xl p-4 transition-all duration-200 hover:-translate-y-0.5 shadow-2xs"
           >
             <div>
               <div className="flex justify-between items-start mb-2.5">
-                <span className="text-[11px] font-medium text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded flex items-center">
+                <span className="text-[11px] font-semibold text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded flex items-center border border-blue-500/20">
                   <Globe className="w-3 h-3 mr-1" />
                   {item.source}
                 </span>
@@ -68,7 +68,7 @@ const NewsList = ({ news }) => {
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
                     : isBearish 
                     ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' 
-                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}>
                   {isBullish && <TrendingUp className="w-2.5 h-2.5 mr-1" />}
                   {isBearish && <TrendingDown className="w-2.5 h-2.5 mr-1" />}
@@ -77,17 +77,17 @@ const NewsList = ({ news }) => {
                 </span>
               </div>
               
-              <h4 className="text-gray-200 font-medium text-sm line-clamp-2 mb-3 group-hover:text-blue-200 transition-colors">
+              <h4 className="text-slate-200 font-semibold text-xs leading-snug line-clamp-2 mb-3 group-hover:text-blue-300 transition-colors">
                 {item.title}
               </h4>
             </div>
             
-            <div className="flex items-center justify-between text-xs text-gray-500 pt-2 border-t border-gray-800/60 mt-auto">
+            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800/80 mt-auto">
               <div className="flex items-center">
-                <Clock className="w-3 h-3 mr-1 text-gray-400" />
+                <Clock className="w-3 h-3 mr-1 text-slate-400" />
                 <span>{formatDate(item.published_at)}</span>
               </div>
-              <ExternalLink className="w-3.5 h-3.5 text-gray-500 group-hover:text-blue-400 transition-colors" />
+              <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors" />
             </div>
           </a>
         );

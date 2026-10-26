@@ -51,6 +51,7 @@ def get_coins():
 @bp.route('/<coin_id>/history', methods=['GET'])
 def get_market_history(coin_id):
     days = request.args.get('days', 30, type=int)
+    currency = request.args.get('currency', 'inr').strip().lower()
     
     # Track user demand
     try:
@@ -61,32 +62,34 @@ def get_market_history(coin_id):
     except Exception:
         db.session.rollback()
         
-    history = fetch_chart_history(coin_id, days)
+    history = fetch_chart_history(coin_id, days, currency)
     return jsonify(history)
 
 @bp.route('/summary', methods=['GET'])
 def get_market_summary():
     search = request.args.get('search', '').strip().lower()
     limit = request.args.get('limit', 100, type=int)
+    currency = request.args.get('currency', 'inr').strip().lower()
     
     if search:
         # Fast SQLite search across 1,000 coins
-        results = search_coins_summary(search, limit=limit)
+        results = search_coins_summary(search, limit=limit, currency=currency)
         return jsonify({"coins": results, "total_available": 1000, "query": search})
         
     # Default: Top cryptocurrencies with live stats
-    top_coins = get_top_50_coins_summary(limit=limit)
+    top_coins = get_top_50_coins_summary(limit=limit, currency=currency)
     return jsonify({"coins": top_coins, "total_available": 1000})
 
 @bp.route('/<coin_id>/stats', methods=['GET'])
 def get_coin_stats(coin_id):
-    stats = fetch_live_24h_stats(coin_id)
+    currency = request.args.get('currency', 'inr').strip().lower()
+    stats = fetch_live_24h_stats(coin_id, currency)
     return jsonify({
         "coin_id": stats.get('coin_id', coin_id),
         "symbol": stats.get('symbol', ''),
         "name": stats.get('name', ''),
         "image": stats.get('image', ''),
-        "ath": stats.get('ath', stats['current_price'] * 1.35),
+        "ath": stats.get('ath') or stats.get('current_price', 0),
         "high_24h": stats['high_24h'],
         "low_24h": stats['low_24h'],
         "price_change_percentage_24h": stats['price_change_percentage_24h'],

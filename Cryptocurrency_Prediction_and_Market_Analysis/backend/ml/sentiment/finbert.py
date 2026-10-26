@@ -1,8 +1,5 @@
 import sqlite3
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import pandas as pd
-import torch.nn.functional as F
 from backend.config import Config
 
 DB_PATH = Config.DATABASE_PATH
@@ -31,15 +28,20 @@ def analyze_sentiment():
         return
         
     try:
+        import torch
+        import torch.nn.functional as F
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
         print(f"Loading FinBERT model ({len(df)} articles to process)...")
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
         use_transformer = True
-    except Exception as e:
-        print(f"FinBERT weights unavailable ({e}). Using financial lexicon analyzer fallback.")
+    except (ImportError, OSError, Exception) as e:
+        print(f"FinBERT/Torch unavailable ({e}). Using financial lexicon analyzer fallback.")
         use_transformer = False
         tokenizer = None
         model = None
+        torch = None
+        F = None
         
     conn = sqlite3.connect(DB_PATH, timeout=60)
     cursor = conn.cursor()

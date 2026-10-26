@@ -109,6 +109,8 @@ class Prediction(db.Model):
     current_price = db.Column(db.Float)
     predicted_price = db.Column(db.Float)
     predicted_return = db.Column(db.Float)
+    range_low = db.Column(db.Float)
+    range_high = db.Column(db.Float)
     confidence = db.Column(db.Float)
     model_version = db.Column(db.String)
     feature_version = db.Column(db.String)

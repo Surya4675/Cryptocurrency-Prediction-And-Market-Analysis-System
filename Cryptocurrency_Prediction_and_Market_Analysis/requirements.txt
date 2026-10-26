@@ -16,3 +16,5 @@ joblib
 pytest
 matplotlib
 schedule
+gunicorn
+

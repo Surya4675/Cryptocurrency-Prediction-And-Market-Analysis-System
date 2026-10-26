@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5000/api');
 
 const client = axios.create({
   baseURL: API_BASE_URL,
@@ -47,12 +47,12 @@ client.interceptors.response.use(
 export const marketApi = {
   getCoins: () => client.get('/market/coins'),
   getSummary: (params = {}) => client.get('/market/summary', { params }),
-  getHistory: (coinId, days = 30) => client.get(`/market/${coinId}/history?days=${days}`),
-  getStats: (coinId) => client.get(`/market/${coinId}/stats`),
+  getHistory: (coinId, days = 30, currency = 'inr') => client.get(`/market/${coinId}/history?days=${days}&currency=${currency.toLowerCase()}`),
+  getStats: (coinId, currency = 'inr') => client.get(`/market/${coinId}/stats?currency=${currency.toLowerCase()}`),
 };
 
 export const predictionApi = {
-  getPrediction: (coinId) => client.get(`/prediction/${coinId}`),
+  getPrediction: (coinId, currency = 'inr') => client.get(`/prediction/${coinId}?currency=${currency.toLowerCase()}`),
 };
 
 export const sentimentApi = {

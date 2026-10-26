@@ -11,13 +11,10 @@ function App() {
   return (
     <CurrencyProvider>
       <Router>
-        <div className="flex h-screen bg-slate-950 text-slate-50 font-sans overflow-hidden relative selection:bg-blue-500/30">
-          {/* Subtle background glow effect */}
-          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-900/20 blur-[120px] pointer-events-none"></div>
-          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-900/10 blur-[120px] pointer-events-none"></div>
-          
+        {/* Enterprise Standard Layout: Clean, solid, professional slate dark theme without AI glow orbs */}
+        <div className="flex h-screen bg-[#0B0F19] text-slate-100 font-sans overflow-hidden">
           <Sidebar />
-          <div className="flex-1 flex flex-col overflow-hidden relative z-10">
+          <div className="flex-1 flex flex-col overflow-hidden">
             <TopTicker />
             
             <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 custom-scrollbar">

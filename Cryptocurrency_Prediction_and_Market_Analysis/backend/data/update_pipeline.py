@@ -133,9 +133,11 @@ def fetch_news_api(coin_id, coin_name):
         
         if pub_date:
             try:
-                pub_date = pd.to_datetime(pub_date).replace(tzinfo=None).to_pydatetime()
+                pub_date_str = pd.to_datetime(pub_date).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
             except:
-                pub_date = datetime.now()
+                pub_date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            pub_date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
         # Check if URL exists to avoid duplicates
         cursor.execute("SELECT id FROM news_articles WHERE url = ?", (url,))
@@ -143,7 +145,7 @@ def fetch_news_api(coin_id, coin_name):
             cursor.execute('''
                 INSERT INTO news_articles (coin_id, title, description, source, url, published_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (coin_id, title, desc, source, url, pub_date))
+            ''', (coin_id, title, desc, source, url, pub_date_str))
             
     conn.commit()
     conn.close()

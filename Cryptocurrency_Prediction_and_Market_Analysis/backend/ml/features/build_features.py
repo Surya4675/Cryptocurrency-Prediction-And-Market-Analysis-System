@@ -27,21 +27,39 @@ def load_market_data(coin_id):
     if df.empty:
         return df
         
-    # Convert timestamp to date and group by date (daily resolution)
-    df['date'] = pd.to_datetime(df['timestamp'], format='mixed', utc=True).dt.date
-    # Take the last observation of the day
-    df = df.groupby('date').last().reset_index()
+    # Convert timestamp to datetime
+    df['datetime'] = pd.to_datetime(df['timestamp'], format='mixed', utc=True)
+    df['date'] = df['datetime'].dt.date
     
-    # Merge sentiment
-    sentiment_df['date'] = pd.to_datetime(sentiment_df['date'], format='mixed', utc=True).dt.date
-    df = pd.merge(df, sentiment_df, on='date', how='left')
-    df['sentiment_score'] = df['sentiment_score'].fillna(0) # Neutral if no news
+    # If we have at least 14 distinct calendar days, aggregate to daily resolution
+    daily_df = df.groupby('date').last().reset_index()
+    if len(daily_df) >= 14:
+        df = daily_df
+    else:
+        # High-frequency observations: keep sequential chronological observations
+        df['date'] = df['datetime']
+        
+    # Merge sentiment if present
+    if not sentiment_df.empty:
+        sentiment_df['date'] = pd.to_datetime(sentiment_df['date'], format='mixed', utc=True).dt.date
+        df['join_d'] = pd.to_datetime(df['date']).dt.date
+        df = pd.merge(df, sentiment_df, left_on='join_d', right_on='date', how='left')
+        df = df.drop(columns=['join_d'], errors='ignore')
+    
+    df['sentiment_score'] = df['sentiment_score'].fillna(0) if 'sentiment_score' in df.columns else 0.0
     
     return df
 
 def generate_technical_features(df):
     """Generate SMA, EMA, RSI, MACD, and Volatility."""
-    # Ensure sorted by date
+    df = df.copy()
+    if 'date' not in df.columns:
+        if 'timestamp' in df.columns:
+            df['date'] = pd.to_datetime(df['timestamp'], format='mixed', errors='coerce', utc=True)
+        elif 'datetime' in df.columns:
+            df['date'] = df['datetime']
+        else:
+            df['date'] = range(len(df))
     df = df.sort_values('date').copy()
     
     # 1. Simple Moving Averages
