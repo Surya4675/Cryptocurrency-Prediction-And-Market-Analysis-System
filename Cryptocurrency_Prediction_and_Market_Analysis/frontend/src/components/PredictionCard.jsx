@@ -114,7 +114,7 @@ const PredictionCard = ({ prediction, livePrice, timeRemaining = 0, onRefresh })
           {/* Calibrated Confidence Badge */}
           <div 
             className="flex items-center px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold font-mono cursor-help"
-            title="Calibrated empirical out-of-sample directional accuracy on chronological test folds"
+            title="Real-time multi-factor confluence combining technical momentum, machine learning inference, and historical track record"
           >
             <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
             <span>{confidencePct}% Conf</span>

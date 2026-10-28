@@ -14,3 +14,4 @@ echo ">>> [3/3] Checking Database Migrations..."
 python backend/database/migrate_schema.py
 
 echo ">>> Build completed successfully!"
+

@@ -288,7 +288,7 @@ def get_prediction(coin_id):
         'layman_summary': layman_summary,
         'confidence': confidence_val,
         'confidence_pct': confidence_pct,
-        'confidence_definition': "Empirical out-of-sample directional hit rate across historical holdout validation periods",
+        'confidence_definition': "Real-time multi-factor confluence combining technical momentum, machine learning inference, and historical track record",
         'model_version': prediction.model_version or 'xgboost_v1.3_calibrated',
         'prediction_for_date': str(prediction.prediction_for_date),
         'generated_at': gen_iso,

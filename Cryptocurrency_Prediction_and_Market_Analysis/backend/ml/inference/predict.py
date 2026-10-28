@@ -224,7 +224,27 @@ def predict_next_day(coin_id, force=False):
         model = None
         model_version = "drift_baseline_v1"
 
-    # Step 6: Construct feature vector
+    # Baseline market price P_0
+    feature_close = float(df['close_price'].iloc[0]) if ('close_price' in df.columns and not pd.isna(df['close_price'].iloc[0])) else None
+    baseline_price = float(live_spot if (live_spot and live_spot > 0) else (feature_close or 100.0))
+
+    # Real volatility of asset
+    daily_vol = float(df['volatility_7'].iloc[0]) if ('volatility_7' in df.columns and not pd.isna(df['volatility_7'].iloc[0])) else 0.028
+
+    # Extract real-time technical indicators for ensemble forecasting & confidence calibration
+    ema_7 = float(df['ema_7'].iloc[0]) if ('ema_7' in df.columns and not pd.isna(df['ema_7'].iloc[0])) else baseline_price
+    ema_14 = float(df['ema_14'].iloc[0]) if ('ema_14' in df.columns and not pd.isna(df['ema_14'].iloc[0])) else baseline_price
+    ema_slope = float((ema_7 - ema_14) / ema_14) if ema_14 > 0 else 0.0
+
+    macd_val = float(df['macd'].iloc[0]) if ('macd' in df.columns and not pd.isna(df['macd'].iloc[0])) else 0.0
+    macd_sig = float(df['macd_signal'].iloc[0]) if ('macd_signal' in df.columns and not pd.isna(df['macd_signal'].iloc[0])) else 0.0
+    norm_macd_diff = float((macd_val - macd_sig) / baseline_price) if baseline_price > 0 else 0.0
+
+    rsi_val = float(df['rsi_14'].iloc[0]) if ('rsi_14' in df.columns and not pd.isna(df['rsi_14'].iloc[0])) else 50.0
+    sent_val = float(df['sentiment_score'].iloc[0]) if ('sentiment_score' in df.columns and not pd.isna(df['sentiment_score'].iloc[0])) else 0.0
+    vol_change = float(df['volume_change'].iloc[0]) if ('volume_change' in df.columns and not pd.isna(df['volume_change'].iloc[0])) else 0.0
+
+    # Step 6: Construct feature vector & calculate high-precision multi-factor ensemble return
     if model is not None:
         for feature in model_features:
             if feature.startswith('coin_'):
@@ -233,32 +253,69 @@ def predict_next_day(coin_id, force=False):
                 df[feature] = 0.0
                 
         if 'sentiment_score' not in df.columns or pd.isna(df['sentiment_score'].iloc[0]):
-            df['sentiment_score'] = 0.0
+            df['sentiment_score'] = sent_val
             
         X = df[model_features].apply(pd.to_numeric, errors='coerce').replace([np.inf, -np.inf], 0.0).fillna(0.0).clip(lower=-1e9, upper=1e9)
-        predicted_log_return = float(model.predict(X)[0])
+        ml_return = float(model.predict(X)[0])
     else:
-        # 7-day EMA drift baseline
         ret_1d = float(df['return_1d'].iloc[0]) if 'return_1d' in df.columns else 0.0
-        predicted_log_return = float(np.clip(ret_1d * 0.35, -0.04, 0.04))
+        ml_return = float(np.clip(ret_1d * 0.30, -0.035, 0.035))
 
-    # Baseline market price P_0
-    feature_close = float(df['close_price'].iloc[0]) if ('close_price' in df.columns and not pd.isna(df['close_price'].iloc[0])) else None
-    baseline_price = float(live_spot if (live_spot and live_spot > 0) else (feature_close or 100.0))
-
-    # Real volatility of asset
-    daily_vol = float(df['volatility_7'].iloc[0]) if ('volatility_7' in df.columns and not pd.isna(df['volatility_7'].iloc[0])) else 0.028
+    # Multi-factor technical alpha factors
+    trend_alpha = float(np.clip(ema_slope * 0.40, -0.035, 0.035))
+    mom_alpha = float(np.clip(norm_macd_diff * 1.5, -0.025, 0.025))
     
-    # Bound log return according to asset volatility (max 2 standard deviations)
-    max_bound = max(0.015, min(0.08, daily_vol * 2.2))
-    bounded_log_return = float(np.clip(predicted_log_return, -max_bound, max_bound))
+    # RSI Mean-Reversion Pressure (dampens extreme momentum pullbacks or bounces)
+    if rsi_val > 70:
+        rsi_alpha = -0.008 * min(1.5, (rsi_val - 70) / 20.0)
+    elif rsi_val < 30:
+        rsi_alpha = 0.008 * min(1.5, (30 - rsi_val) / 20.0)
+    else:
+        rsi_alpha = 0.0
 
-    # Target Price P_24
+    sentiment_alpha = float(np.clip(sent_val * 0.015, -0.015, 0.015))
+    vol_multiplier = 1.08 if vol_change > 0.05 else (0.92 if vol_change < -0.15 else 1.0)
+
+    # Combine into optimal quantitative ensemble
+    if model is not None:
+        ensemble_log_return = (
+            0.45 * ml_return + 
+            0.30 * trend_alpha + 
+            0.15 * mom_alpha + 
+            0.10 * sentiment_alpha + 
+            rsi_alpha
+        ) * vol_multiplier
+    else:
+        ensemble_log_return = (
+            0.55 * trend_alpha + 
+            0.30 * mom_alpha + 
+            0.15 * sentiment_alpha + 
+            rsi_alpha
+        ) * vol_multiplier
+
+    # Adaptive volatility bounding (strictly proportional to asset risk profile)
+    max_bound = max(0.015, min(0.065, daily_vol * 1.8))
+    bounded_log_return = float(np.clip(ensemble_log_return, -max_bound, max_bound))
+
+    # Target Price P_24 anchored cleanly to authoritative CoinGecko spot price
     predicted_price = float(baseline_price * np.exp(bounded_log_return))
     predicted_simple_return = float((predicted_price - baseline_price) / baseline_price)
 
-    # Step 7: Statistically grounded calibration & uncertainty
-    calibrated = get_calibrated_uncertainty(coin_id, baseline_price, predicted_simple_return, daily_volatility=daily_vol)
+    # Step 7: Statistically grounded calibration & real-time multi-factor confidence
+    tech_context = {
+        'ema_slope': ema_slope,
+        'macd_diff': norm_macd_diff,
+        'rsi_14': rsi_val,
+        'sentiment_score': sent_val,
+        'volume_change': vol_change
+    }
+    calibrated = get_calibrated_uncertainty(
+        coin_id, 
+        baseline_price, 
+        predicted_simple_return, 
+        daily_volatility=daily_vol,
+        technical_context=tech_context
+    )
     range_low = calibrated['range_low']
     range_high = calibrated['range_high']
     confidence = calibrated['confidence']

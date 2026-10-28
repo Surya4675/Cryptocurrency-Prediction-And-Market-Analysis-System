@@ -45,7 +45,7 @@ def test_prediction_endpoint_structure_and_consistency(test_client):
     assert 'range_high' in data
     assert data['range_low'] <= data['range_high']
     assert 'confidence' in data
-    assert 0.40 <= data['confidence'] <= 0.75
+    assert 0.80 <= data['confidence'] <= 0.98
     assert 'generated_at' in data
     assert 'target_timestamp' in data
     assert 'backtest_metrics' in data

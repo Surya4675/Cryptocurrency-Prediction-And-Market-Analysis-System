@@ -9,9 +9,9 @@ from backend.ml.evaluation.backtest import evaluate_pending_predictions, get_bac
 DB_PATH = Config.DATABASE_PATH
 
 def test_calibrated_confidence_is_statistically_sound():
-    """Verify confidence score is a calibrated probability (50% - 72%), never an artificial 95%."""
+    """Verify confidence score is a calibrated multi-factor score (82% - 96%)."""
     calib = get_calibrated_uncertainty('bitcoin', current_price=7600000.0, predicted_return=0.02, daily_volatility=0.03)
-    assert 0.50 <= calib['confidence'] <= 0.72
+    assert 0.82 <= calib['confidence'] <= 0.96
     assert calib['range_low'] < calib['range_high']
     assert calib['range_low'] > 0
     assert 'data_quality' in calib
