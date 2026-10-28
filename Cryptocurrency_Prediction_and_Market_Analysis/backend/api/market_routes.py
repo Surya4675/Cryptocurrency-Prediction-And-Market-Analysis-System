@@ -8,7 +8,8 @@ from ..services.market_data_service import (
     search_coins_summary,
     fetch_live_coin_price,
     fetch_live_24h_stats,
-    fetch_chart_history
+    fetch_chart_history,
+    get_market_diagnostics
 )
 
 bp = Blueprint('market', __name__)
@@ -95,5 +96,16 @@ def get_coin_stats(coin_id):
         "price_change_percentage_24h": stats['price_change_percentage_24h'],
         "current_price": stats['current_price'],
         "total_volume": stats.get('total_volume', 0),
-        "market_cap": stats.get('market_cap', 0)
+        "market_cap": stats.get('market_cap', 0),
+        "source": stats.get('source', 'coingecko'),
+        "is_stale": stats.get('is_stale', False),
+        "retrieval_timestamp": stats.get('retrieval_timestamp'),
+        "data_timestamp": stats.get('data_timestamp'),
+        "data_age_seconds": stats.get('data_age_seconds', 0)
     })
+
+@bp.route('/<coin_id>/diagnostics', methods=['GET'])
+def get_coin_diagnostics(coin_id):
+    currency = request.args.get('currency', 'inr').strip().lower()
+    diag = get_market_diagnostics(coin_id, currency)
+    return jsonify(diag)

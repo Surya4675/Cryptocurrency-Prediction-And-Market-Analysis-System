@@ -49,10 +49,16 @@ export const marketApi = {
   getSummary: (params = {}) => client.get('/market/summary', { params }),
   getHistory: (coinId, days = 30, currency = 'inr') => client.get(`/market/${coinId}/history?days=${days}&currency=${currency.toLowerCase()}`),
   getStats: (coinId, currency = 'inr') => client.get(`/market/${coinId}/stats?currency=${currency.toLowerCase()}`),
+  getDiagnostics: (coinId, currency = 'inr') => client.get(`/market/${coinId}/diagnostics?currency=${currency.toLowerCase()}`),
 };
 
 export const predictionApi = {
-  getPrediction: (coinId, currency = 'inr') => client.get(`/prediction/${coinId}?currency=${currency.toLowerCase()}`),
+  getPrediction: (coinId, currency = 'inr', refresh = false) => 
+    client.get(`/prediction/${coinId}?currency=${currency.toLowerCase()}${refresh ? '&refresh=true' : ''}`),
+  getHistory: (coinId, currency = 'inr') => 
+    client.get(`/prediction/${coinId}/history?currency=${currency.toLowerCase()}`),
+  getBacktest: (coinId) => 
+    client.get(`/prediction/${coinId}/backtest`),
 };
 
 export const sentimentApi = {

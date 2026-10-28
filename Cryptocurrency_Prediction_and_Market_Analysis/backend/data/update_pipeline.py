@@ -19,18 +19,16 @@ COINGECKO_API_KEY = Config.COINGECKO_API_KEY
 
 def fetch_coingecko_prices(coin_id):
     """Fetch 30 days of daily historical data for features, and today's latest price."""
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+    from backend.services.market_data_service import get_coingecko_headers, SUPPORTED_COINS
+    info = SUPPORTED_COINS.get(coin_id, {'coingecko_id': coin_id})
+    cg_id = info.get('coingecko_id', coin_id)
+    url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart"
     params = {
         'vs_currency': 'inr',
         'days': '35',
-        'interval': 'daily',
-        'x_cg_demo_api_key': COINGECKO_API_KEY
+        'interval': 'daily'
     }
-    
-    headers = {
-        "accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
+    headers = get_coingecko_headers()
     try:
         response = requests.get(url, params=params, headers=headers, timeout=4)
         if response.status_code == 200:

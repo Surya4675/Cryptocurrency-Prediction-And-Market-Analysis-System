@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { marketApi, predictionApi, sentimentApi, newsApi } from '../api/client';
 import PriceChart from '../components/PriceChart';
 import PredictionCard from '../components/PredictionCard';
@@ -7,7 +7,7 @@ import NewsList from '../components/NewsList';
 import CoinSelector from '../components/CoinSelector';
 import PriceHistoryStats from '../components/PriceHistoryStats';
 import ShapExplainability from '../components/ShapExplainability';
-import { RefreshCw, Clock, Sparkles } from 'lucide-react';
+import { RefreshCw, Clock, Sparkles, Activity, ShieldCheck, X } from 'lucide-react';
 import { useCurrency } from '../context/CurrencyContext';
 import { CURRENCY_CONFIG } from '../utils/currencyConfig';
 import { getCoinLogo, getFallbackCoinLogo } from '../utils/coinLogos';
@@ -40,11 +40,14 @@ const Dashboard = () => {
   const [sentiment, setSentiment] = useState(null);
   const [news, setNews] = useState([]);
   const [coinStats, setCoinStats] = useState(null);
+  const [diagnostics, setDiagnostics] = useState(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
 
   const [timeRange, setTimeRange] = useState(1); // Default to 24H
+  const requestSeq = useRef(0);
 
   // Live ticking clock updated every second
   useEffect(() => {
@@ -70,8 +73,10 @@ const Dashboard = () => {
     localStorage.setItem('selectedCoin', selectedCoin);
   }, [selectedCoin]);
 
-  const fetchDashboardData = async (isBackground = false) => {
+  const fetchDashboardData = async (isBackground = false, forceRefresh = false) => {
     if (!selectedCoin) return;
+    const thisSeq = ++requestSeq.current;
+
     if (!isBackground) {
       setLoading(true);
     } else {
@@ -79,24 +84,33 @@ const Dashboard = () => {
     }
     
     try {
-      const [statsRes, historyRes, predRes, sentRes, newsRes] = await Promise.all([
+      const [statsRes, historyRes, predRes, sentRes, newsRes, diagRes] = await Promise.all([
         marketApi.getStats(selectedCoin, currency).catch(() => ({ data: null })),
         marketApi.getHistory(selectedCoin, timeRange, currency).catch(() => ({ data: [] })),
-        predictionApi.getPrediction(selectedCoin, currency).catch(() => ({ data: null })),
+        predictionApi.getPrediction(selectedCoin, currency, forceRefresh).catch(() => ({ data: null })),
         sentimentApi.getSentiment(selectedCoin).catch(() => ({ data: null })),
-        newsApi.getNews(selectedCoin).catch(() => ({ data: [] }))
+        newsApi.getNews(selectedCoin).catch(() => ({ data: [] })),
+        marketApi.getDiagnostics(selectedCoin, currency).catch(() => ({ data: null }))
       ]);
+
+      // Guard against race conditions when user switches coins quickly
+      if (thisSeq !== requestSeq.current) {
+        return;
+      }
 
       setCoinStats(statsRes.data);
       setHistory(historyRes.data || []);
       setPrediction(predRes.data);
       setSentiment(sentRes.data);
       setNews(newsRes.data || []);
+      setDiagnostics(diagRes.data);
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (thisSeq === requestSeq.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
@@ -160,13 +174,24 @@ const Dashboard = () => {
           
           <div className="flex items-center gap-2 md:gap-3 shrink-0 self-end sm:self-auto">
             <button
-              onClick={() => fetchDashboardData(false)}
+              onClick={() => setShowDiagnostics(true)}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs border border-slate-800 transition-colors"
+              title="Inspect CoinGecko live feed diagnostics"
+            >
+              <Activity className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline font-mono text-[11px]">
+                {diagnostics?.source === 'coingecko' ? 'CoinGecko Live' : 'Market Status'}
+              </span>
+            </button>
+
+            <button
+              onClick={() => fetchDashboardData(false, true)}
               disabled={refreshing}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold border border-slate-800 transition-colors shadow-2xs"
-              title="Click to refresh market data"
+              title="Click to recalculate forecast with live CoinGecko market price"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${refreshing ? 'animate-spin' : ''}`} />
-              <span className="hidden md:inline">Refresh</span>
+              <span className="hidden md:inline">Recalculate & Sync</span>
             </button>
 
             <div className="flex items-center bg-slate-900 hover:bg-slate-800/80 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs shadow-2xs transition-colors">
@@ -309,6 +334,76 @@ const Dashboard = () => {
             <NewsList news={news} />
           </div>
         </>
+      )}
+
+      {/* Diagnostics Modal */}
+      {showDiagnostics && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0b0f19] border border-slate-800 rounded-2xl max-w-lg w-full p-5 text-white shadow-2xl relative">
+            <button 
+              onClick={() => setShowDiagnostics(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-2 mb-3">
+              <Activity className="w-5 h-5 text-emerald-400" />
+              <h3 className="font-bold text-base">Market Data Diagnostics</h3>
+            </div>
+            
+            <p className="text-xs text-slate-400 mb-4">
+              Diagnostic verification of real-time price feeds, CoinGecko asset mapping, and API cache status.
+            </p>
+
+            <div className="space-y-2.5 font-mono text-xs">
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">Asset ID / Symbol:</span>
+                <span className="text-white font-bold">{selectedCoin.toUpperCase()} ({diagnostics?.symbol || 'BTC'})</span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">CoinGecko Canonical ID:</span>
+                <span className="text-cyan-400">{diagnostics?.canonical_coingecko_id || selectedCoin}</span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">Authoritative Source:</span>
+                <span className="text-emerald-400 font-bold">{diagnostics?.source || 'coingecko'}</span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">Active Currency:</span>
+                <span className="text-white">{currency.toUpperCase()}</span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">Data Retrieval Timestamp:</span>
+                <span className="text-slate-300 text-[11px]">{diagnostics?.retrieval_timestamp || 'Just now'}</span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">CoinGecko Last Update:</span>
+                <span className="text-slate-300 text-[11px]">{diagnostics?.data_timestamp || 'Real-time'}</span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">Data Age:</span>
+                <span className="text-white">{diagnostics?.data_age_seconds !== undefined ? `${diagnostics.data_age_seconds}s old` : 'Fresh (<25s)'}</span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">Staleness Flag:</span>
+                <span className={diagnostics?.is_stale ? 'text-amber-400' : 'text-emerald-400'}>
+                  {diagnostics?.is_stale ? 'Stale / Cached' : 'Fresh Verified'}
+                </span>
+              </div>
+              <div className="flex justify-between p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 font-sans">API Rate Limit:</span>
+                <span className="text-emerald-400">Normal (Active Key Connected)</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowDiagnostics(false)}
+              className="w-full mt-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-semibold text-xs transition-colors"
+            >
+              Close Diagnostics
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

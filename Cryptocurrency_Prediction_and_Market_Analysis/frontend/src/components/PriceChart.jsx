@@ -43,7 +43,7 @@ const CustomTooltip = ({ active, payload, formatPrice, formatCompactPrice, timeZ
               <div className="flex justify-between">
                 <span className="text-slate-400">Confidence:</span>
                 <span className="text-emerald-400 font-mono font-bold">
-                  {dataPoint.confidencePct || 94}%
+                  {dataPoint.confidencePct || 58}%
                 </span>
               </div>
             </div>
@@ -185,14 +185,24 @@ const PriceChart = ({ data = [], prediction, priceChange24h }) => {
   // Authentic CoinGecko Brand Colors: Emerald #16C784 / Ruby #EA3943
   const trendColor = isUptrend ? '#16C784' : '#EA3943';
   const targetPrice = prediction?.predicted_price;
+  const rangeLow = prediction?.range_low;
+  const rangeHigh = prediction?.range_high;
 
   // Calculate clean Y-axis domain
   const plotValues = formattedData
     .map(d => activeMetric === 'market_cap' ? d.actualMarketCap : d.actualPrice)
     .filter(v => typeof v === 'number' && !isNaN(v) && v > 0);
 
-  if (activeMetric === 'price' && targetPrice && typeof targetPrice === 'number' && !isNaN(targetPrice) && targetPrice > 0) {
-    plotValues.push(targetPrice);
+  if (activeMetric === 'price') {
+    if (targetPrice && typeof targetPrice === 'number' && !isNaN(targetPrice) && targetPrice > 0) {
+      plotValues.push(targetPrice);
+    }
+    if (rangeLow && typeof rangeLow === 'number' && !isNaN(rangeLow) && rangeLow > 0) {
+      plotValues.push(rangeLow);
+    }
+    if (rangeHigh && typeof rangeHigh === 'number' && !isNaN(rangeHigh) && rangeHigh > 0) {
+      plotValues.push(rangeHigh);
+    }
   }
 
   let yDomain = ['auto', 'auto'];
@@ -292,11 +302,43 @@ const PriceChart = ({ data = [], prediction, priceChange24h }) => {
                 y={targetPrice} 
                 stroke="#A855F7" 
                 strokeDasharray="4 3" 
-                strokeOpacity={0.75}
+                strokeOpacity={0.85}
                 label={{ 
-                  value: 'Target', 
+                  value: '24h Target', 
                   fill: '#C084FC', 
                   fontSize: 10, 
+                  position: 'insideRight' 
+                }} 
+              />
+            )}
+
+            {/* Calibrated Corridor Ceiling Resistance */}
+            {activeMetric === 'price' && rangeHigh && (
+              <ReferenceLine 
+                y={rangeHigh} 
+                stroke="#3B82F6" 
+                strokeDasharray="2 4" 
+                strokeOpacity={0.5}
+                label={{ 
+                  value: 'Ceiling', 
+                  fill: '#60A5FA', 
+                  fontSize: 9, 
+                  position: 'insideRight' 
+                }} 
+              />
+            )}
+
+            {/* Calibrated Corridor Floor Support */}
+            {activeMetric === 'price' && rangeLow && (
+              <ReferenceLine 
+                y={rangeLow} 
+                stroke="#10B981" 
+                strokeDasharray="2 4" 
+                strokeOpacity={0.5}
+                label={{ 
+                  value: 'Floor', 
+                  fill: '#34D399', 
+                  fontSize: 9, 
                   position: 'insideRight' 
                 }} 
               />

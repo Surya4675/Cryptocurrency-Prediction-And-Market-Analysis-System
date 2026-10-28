@@ -8,10 +8,14 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from backend.data.update_pipeline import run_update_pipeline
+from backend.ml.evaluation.backtest import evaluate_pending_predictions
 
 def job():
     print(f"\n[{datetime.now()}] Triggering scheduled 2-minute pipeline job...")
     try:
+        evaluated = evaluate_pending_predictions()
+        if evaluated > 0:
+            print(f"[{datetime.now()}] Evaluated {evaluated} due forecasts against observed prices.")
         run_update_pipeline()
     except Exception as e:
         print(f"[{datetime.now()}] Error in pipeline job: {e}")

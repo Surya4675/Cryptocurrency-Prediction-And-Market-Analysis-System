@@ -229,6 +229,8 @@ def get_coin_ath(coin_id, current_price=0, sym=''):
     return round(base_val * 1.5, 2 if base_val > 10 else 4)
 
 _COINGECKO_MARKETS_CACHE = {'data': {}, 'list': [], 'last_updated': 0}
+_COINGECKO_DIAGNOSTICS = {}
+_LAST_API_ERROR = None
 _RATE_CACHE = {'rate': 94.90, 'last_updated': 0}
 _FX_CACHE = {
     'rates': {'INR': 94.90, 'USD': 1.0, 'EUR': 0.94, 'GBP': 0.79, 'JPY': 156.0, 'CNY': 7.12, 'AUD': 1.50, 'CAD': 1.38},
@@ -236,6 +238,7 @@ _FX_CACHE = {
 }
 _PRICE_CACHE = {}
 _CHART_CACHE = {}
+_STATS_CACHE = {}
 
 def get_currency_rate(curr='inr'):
     """Returns the multiplier to convert 1 INR into the target currency."""
@@ -424,16 +427,152 @@ def fetch_live_exchange_markets():
 
     return _COINGECKO_MARKETS_CACHE['data']
 
+def fetch_coingecko_markets_direct(coin_ids=None):
+    """
+    Authoritative CoinGecko markets fetcher.
+    Fetches real-time cryptocurrency data in INR (or specified currency) directly
+    from official CoinGecko API (/coins/markets?vs_currency=inr).
+    Normalizes response, populates caching layer and diagnostics.
+    """
+    global _LAST_API_ERROR
+    now = time.time()
+    headers = get_coingecko_headers()
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        'vs_currency': 'inr',
+        'sparkline': 'false',
+        'price_change_percentage': '24h'
+    }
+
+    if coin_ids:
+        # Resolve canonical CoinGecko IDs
+        cg_ids = []
+        for cid in coin_ids:
+            sym = get_symbol_for_coin(cid)
+            info = SUPPORTED_COINS.get(cid, {'coingecko_id': cid})
+            cg_ids.append(info.get('coingecko_id', cid))
+        params['ids'] = ','.join(cg_ids[:50])
+        params['per_page'] = min(50, len(cg_ids))
+        params['page'] = 1
+    else:
+        params['order'] = 'market_cap_desc'
+        params['per_page'] = 100
+        params['page'] = 1
+
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=5.0)
+        if res.status_code == 200:
+            raw_coins = res.json()
+            if isinstance(raw_coins, list) and len(raw_coins) > 0:
+                retrieval_iso = datetime.now(timezone.utc).isoformat()
+                result_map = _COINGECKO_MARKETS_CACHE.get('data', {}).copy()
+                summary_list = []
+
+                for c in raw_coins:
+                    cid = c.get('id')
+                    sym = (c.get('symbol') or '').upper()
+                    name = c.get('name', sym)
+                    cp = float(c.get('current_price') or 0.0)
+                    high = float(c.get('high_24h') or (cp * 1.015))
+                    low = float(c.get('low_24h') or (cp * 0.985))
+                    chg_pct = float(c.get('price_change_percentage_24h') or 0.0)
+                    vol = float(c.get('total_volume') or 0.0)
+                    mcap = float(c.get('market_cap') or 0.0)
+                    rank = int(c.get('market_cap_rank') or 999)
+                    ath_val = float(c.get('ath') or get_coin_ath(cid, cp, sym))
+                    img = c.get('image') or get_coin_image_url(sym, cid)
+                    data_updated = c.get('last_updated') or retrieval_iso
+
+                    entry = {
+                        'id': rank,
+                        'coin_id': cid,
+                        'symbol': sym,
+                        'name': name,
+                        'image': img,
+                        'current_price': round(cp, 4 if cp < 10 else 2),
+                        'high_24h': round(high, 4 if high < 10 else 2),
+                        'low_24h': round(low_24h if 'low_24h' in locals() and low_24h else low, 4 if low < 10 else 2),
+                        'price_change_percentage_24h': round(chg_pct, 2),
+                        'total_volume': round(vol, 0),
+                        'market_cap': round(mcap, 0),
+                        'market_cap_rank': rank,
+                        'ath': round(ath_val, 4 if ath_val < 10 else 2),
+                        'source': 'coingecko',
+                        'is_stale': False,
+                        'retrieval_timestamp': retrieval_iso,
+                        'data_timestamp': data_updated
+                    }
+
+                    result_map[cid] = entry
+                    summary_list.append(entry)
+
+                    # Update price cache and diagnostic state
+                    _PRICE_CACHE[cid] = {'price': cp, 'time': now}
+                    _COINGECKO_DIAGNOSTICS[cid] = {
+                        'source': 'coingecko',
+                        'fetch_time': now,
+                        'retrieval_timestamp': retrieval_iso,
+                        'data_timestamp': data_updated,
+                        'is_stale': False,
+                        'last_api_error': None,
+                        'is_rate_limited': False
+                    }
+
+                if not coin_ids:
+                    summary_list.sort(key=lambda x: x.get('market_cap_rank', 999))
+                    _COINGECKO_MARKETS_CACHE['data'] = result_map
+                    _COINGECKO_MARKETS_CACHE['list'] = summary_list
+                    _COINGECKO_MARKETS_CACHE['last_updated'] = now
+                    sync_coins_to_db(summary_list)
+                else:
+                    _COINGECKO_MARKETS_CACHE['data'].update(result_map)
+
+                _LAST_API_ERROR = None
+                return result_map
+        elif res.status_code == 429:
+            _LAST_API_ERROR = "CoinGecko API rate limit (HTTP 429) encountered. Serving cached data."
+            print(f"[MarketService] {_LAST_API_ERROR}")
+            if coin_ids:
+                for cid in coin_ids:
+                    if cid in _COINGECKO_DIAGNOSTICS:
+                        _COINGECKO_DIAGNOSTICS[cid]['is_rate_limited'] = True
+                        _COINGECKO_DIAGNOSTICS[cid]['last_api_error'] = _LAST_API_ERROR
+        else:
+            _LAST_API_ERROR = f"CoinGecko API returned status {res.status_code}: {res.text[:100]}"
+            print(f"[MarketService] {_LAST_API_ERROR}")
+    except Exception as e:
+        _LAST_API_ERROR = f"CoinGecko API connection error: {e}"
+        print(f"[MarketService] {_LAST_API_ERROR}")
+
+    return None
+
 def fetch_all_coingecko_markets():
     """
     Fetch cryptocurrencies with real-time caching.
-    Uses CoinGecko API if accessible; seamlessly falls back to CoinLore + Bybit.
+    Uses CoinGecko API as authoritative primary source.
+    Falls back gracefully to cached CoinGecko data (marked stale) or secondary exchange feed.
     """
     now = time.time()
-    if (now - _COINGECKO_MARKETS_CACHE['last_updated'] < 30) and _COINGECKO_MARKETS_CACHE['data']:
+    # Cache for 25 seconds to respect CoinGecko demo rate limits while providing responsive updates
+    if (now - _COINGECKO_MARKETS_CACHE['last_updated'] < 25) and _COINGECKO_MARKETS_CACHE['data']:
         return _COINGECKO_MARKETS_CACHE['data']
 
-    # Direct exchange fallback (reliable, TLS-compatible, no rate-limiting blocks)
+    # 1. Primary: Official CoinGecko API
+    cg_res = fetch_coingecko_markets_direct()
+    if cg_res:
+        return cg_res
+
+    # 2. If CoinGecko temporarily failed or throttled, return cached CoinGecko data flagged as stale
+    if _COINGECKO_MARKETS_CACHE.get('data'):
+        for cid, item in _COINGECKO_MARKETS_CACHE['data'].items():
+            item['is_stale'] = True
+            item['source'] = 'coingecko_cached'
+            if cid in _COINGECKO_DIAGNOSTICS:
+                _COINGECKO_DIAGNOSTICS[cid]['is_stale'] = True
+                _COINGECKO_DIAGNOSTICS[cid]['source'] = 'coingecko_cached'
+        return _COINGECKO_MARKETS_CACHE['data']
+
+    # 3. Emergency cold fallback if cache is completely empty
     return fetch_live_exchange_markets()
 
 def get_top_50_coins_summary(limit=50, currency='inr'):
@@ -554,120 +693,65 @@ def search_coins_summary(query, limit=50, currency='inr'):
 
 _CG_WEB_CACHE = {}
 
-def fetch_coingecko_web_metrics(coin_id):
-    """
-    Direct live web scraper for official CoinGecko INR coin pages.
-    Extracts the exact spot price, 24h change, 24h high/low, and market cap.
-    """
-    now = time.time()
-    if coin_id in _CG_WEB_CACHE and (now - _CG_WEB_CACHE[coin_id]['time'] < 15):
-        return _CG_WEB_CACHE[coin_id]['data']
-
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    url = f'https://www.coingecko.com/en/coins/{coin_id}/inr'
-    try:
-        r = requests.get(url, headers=headers, timeout=3.5)
-        if r.status_code == 200:
-            price = None
-            for s in re.findall(r'<script type="application/ld\+json">([\s\S]*?)</script>', r.text):
-                try:
-                    d = json.loads(s.strip())
-                    if isinstance(d, dict) and 'offers' in d:
-                        price = float(d['offers'].get('price', 0))
-                        break
-                except Exception:
-                    pass
-
-            chg_24h = 0.0
-            m = re.search(r'>(\d+\.?\d*)%</span>\s*(decline|increase|higher|gain|loss)\s+since\s+yesterday', r.text, re.IGNORECASE)
-            if m:
-                val = float(m.group(1))
-                word = m.group(2).lower()
-                chg_24h = -val if word in ('decline', 'loss') else val
-
-            low_24h, high_24h = None, None
-            price_tags = re.findall(r'data-price-json="([^"]+)"', r.text)
-            if len(price_tags) >= 2:
-                try:
-                    t0_j = json.loads(html.unescape(price_tags[0]))
-                    t1_j = json.loads(html.unescape(price_tags[1]))
-                    p0 = float(t0_j.get('inr') or 0)
-                    p1 = float(t1_j.get('inr') or 0)
-                    if p0 > 0 and p1 > 0:
-                        low_24h = min(p0, p1)
-                        high_24h = max(p0, p1)
-                except Exception:
-                    pass
-
-            if price:
-                if not low_24h: low_24h = price * 0.985
-                if not high_24h: high_24h = price * 1.015
-                res = {
-                    'coin_id': coin_id,
-                    'current_price': round(price, 2 if price > 10 else 6),
-                    'high_24h': round(high_24h, 2 if high_24h > 10 else 6),
-                    'low_24h': round(low_24h, 2 if low_24h > 10 else 6),
-                    'price_change_percentage_24h': round(chg_24h, 2)
-                }
-                _CG_WEB_CACHE[coin_id] = {'data': res, 'time': now}
-                _PRICE_CACHE[coin_id] = {'price': res['current_price'], 'time': now}
-                return res
-    except Exception:
-        pass
-    return None
-
 def fetch_live_coin_price(coin_id):
     """
-    Fetch exact live price in INR:
-    1. Primary: Direct official CoinGecko live feed
-    2. Fallback: Cached live market entry
-    3. Fallback: Bybit live spot ticker
-    4. Fallback: Database latest
+    Fetch authoritative live price in INR for coin_id:
+    1. Primary: Fresh CoinGecko cache (<25 seconds)
+    2. Primary: Direct CoinGecko API (/coins/markets?vs_currency=inr&ids=...)
+    3. Fallback: Cached CoinGecko price (marked stale)
+    4. Fallback: Database latest recorded price
+    Never invents or fabricates prices.
     """
-    cg_live = fetch_coingecko_web_metrics(coin_id)
-    if cg_live and cg_live.get('current_price', 0) > 0:
-        return cg_live['current_price']
+    if not coin_id:
+        return 100.0
+
+    cid_l = coin_id.lower().strip()
+    sym = get_symbol_for_coin(cid_l)
+    info = SUPPORTED_COINS.get(cid_l, {'coingecko_id': cid_l})
+    cg_id = info.get('coingecko_id', cid_l)
 
     now = time.time()
-    cached = _PRICE_CACHE.get(coin_id)
-    if cached and (now - cached['time'] < 15):
-        return cached['price']
+    
+    # 1. Check in-memory price cache (TTL 25s)
+    cached_p = _PRICE_CACHE.get(cid_l) or _PRICE_CACHE.get(cg_id)
+    if cached_p and (now - cached_p.get('time', 0) < 25):
+        return cached_p['price']
 
-    cg_markets = fetch_all_coingecko_markets()
-    if coin_id in cg_markets and cg_markets[coin_id].get('current_price', 0) > 0:
-        return cg_markets[coin_id]['current_price']
+    # 2. Check CoinGecko markets cache
+    cg_markets = _COINGECKO_MARKETS_CACHE.get('data', {})
+    if (cid_l in cg_markets or cg_id in cg_markets) and (now - _COINGECKO_MARKETS_CACHE.get('last_updated', 0) < 25):
+        target_entry = cg_markets.get(cid_l) or cg_markets.get(cg_id)
+        if target_entry and target_entry.get('current_price', 0) > 0:
+            p = float(target_entry['current_price'])
+            _PRICE_CACHE[cid_l] = {'price': p, 'time': now}
+            return p
 
-    sym = get_symbol_for_coin(coin_id)
-    usd_inr = get_usd_inr_rate()
+    # 3. Direct CoinGecko fetch for this specific coin
+    res = fetch_coingecko_markets_direct([cg_id])
+    if res:
+        entry = res.get(cg_id) or res.get(cid_l)
+        if entry and entry.get('current_price', 0) > 0:
+            p = float(entry['current_price'])
+            _PRICE_CACHE[cid_l] = {'price': p, 'time': now}
+            return p
 
-    try:
-        res = requests.get(f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={sym}USDT", timeout=1.8)
-        if res.status_code == 200:
-            items = res.json().get('result', {}).get('list', [])
-            if items:
-                p = float(items[0]['lastPrice']) * usd_inr
-                _PRICE_CACHE[coin_id] = {'price': p, 'time': now}
-                return p
-    except Exception:
-        pass
+    # 4. If direct call failed, use any cached price (even if >25s old)
+    if cached_p and cached_p.get('price', 0) > 0:
+        if cid_l in _COINGECKO_DIAGNOSTICS:
+            _COINGECKO_DIAGNOSTICS[cid_l]['is_stale'] = True
+            _COINGECKO_DIAGNOSTICS[cid_l]['source'] = 'coingecko_cached'
+        return cached_p['price']
 
-    try:
-        res = requests.get(f"https://api.mexc.com/api/v3/ticker/price?symbol={sym}USDT", timeout=1.8)
-        if res.status_code == 200:
-            p_usd = float(res.json().get('price', 0))
-            if p_usd > 0:
-                p = p_usd * usd_inr
-                _PRICE_CACHE[coin_id] = {'price': p, 'time': now}
-                return p
-    except Exception:
-        pass
+    if cid_l in cg_markets:
+        p = float(cg_markets[cid_l].get('current_price', 0))
+        if p > 0:
+            return p
 
+    # 5. Database latest recorded price fallback
     try:
         conn = sqlite3.connect(DB_PATH, timeout=5)
         cur = conn.cursor()
-        cur.execute("SELECT price FROM market_prices WHERE coin_id = ? ORDER BY id DESC LIMIT 1", (coin_id,))
+        cur.execute("SELECT price FROM market_prices WHERE coin_id = ? ORDER BY timestamp DESC LIMIT 1", (cid_l,))
         row = cur.fetchone()
         conn.close()
         if row and row[0]:
@@ -677,249 +761,159 @@ def fetch_live_coin_price(coin_id):
 
     return 100.0
 
-_STATS_CACHE = {}
-
 def fetch_live_24h_stats(coin_id, currency='inr'):
     """
-    Fetch authentic 24h stats directly from CoinGecko official API:
-    current_price, high_24h, low_24h, price_change_percentage_24h, volume, market_cap, ath.
-    Supports multi-currency conversions (INR, USD, EUR, etc.).
+    Fetch authentic 24h market stats for coin_id directly from official CoinGecko API:
+    current_price, high_24h, low_24h, price_change_percentage_24h, total_volume, market_cap, ath.
+    Supports multi-currency conversions and provides full retrieval metadata.
     """
     now = time.time()
-    curr = currency.lower().strip()
-    cache_key = f"{coin_id}_{curr}"
+    curr = (currency or 'inr').lower().strip()
+    cid_l = (coin_id or '').lower().strip()
+    sym = get_symbol_for_coin(cid_l)
+    info = SUPPORTED_COINS.get(cid_l, {'symbol': sym, 'name': sym.upper(), 'coingecko_id': cid_l})
+    cg_id = info.get('coingecko_id', cid_l)
+
+    cache_key = f"{cid_l}_{curr}"
     cached = _STATS_CACHE.get(cache_key)
-    if cached and (now - cached['time'] < 15):
+    if cached and (now - cached.get('time', 0) < 25):
         return cached['data']
 
-    sym = get_symbol_for_coin(coin_id)
-    info = SUPPORTED_COINS.get(coin_id, {'symbol': sym, 'name': sym.upper()})
-    cg_id = info.get('coingecko_id', coin_id)
-    headers = get_coingecko_headers()
+    # 1. Try CoinGecko markets cache first
+    cg_markets = _COINGECKO_MARKETS_CACHE.get('data', {})
+    cg_entry = cg_markets.get(cid_l) or cg_markets.get(cg_id)
+    
+    # If not in cache or cache is stale (>25s), query CoinGecko API
+    if not cg_entry or (now - _COINGECKO_MARKETS_CACHE.get('last_updated', 0) >= 25):
+        fetch_coingecko_markets_direct([cg_id])
+        cg_entry = _COINGECKO_MARKETS_CACHE.get('data', {}).get(cg_id) or _COINGECKO_MARKETS_CACHE.get('data', {}).get(cid_l)
 
-    # 1. Primary: Official CoinGecko Direct Market API
-    try:
-        url = f"https://api.coingecko.com/api/v3/coins/{cg_id}"
-        params = {
-            'localization': 'false',
-            'tickers': 'false',
-            'market_data': 'true',
-            'community_data': 'false',
-            'developer_data': 'false',
-            'sparkline': 'false'
-        }
-        res = requests.get(url, params=params, headers=headers, timeout=4.0)
-        if res.status_code == 200:
-            md = res.json().get('market_data', {})
-            curr_prices = md.get('current_price', {})
-            highs = md.get('high_24h', {})
-            lows = md.get('low_24h', {})
-            vols = md.get('total_volume', {})
-            mcaps = md.get('market_cap', {})
-            aths = md.get('ath', {})
+    fx_rate = get_currency_rate(curr)
+    retrieval_iso = datetime.now(timezone.utc).isoformat()
 
-            cp = float(curr_prices.get(curr) or curr_prices.get('inr') or curr_prices.get('usd') or 0)
-            if cp > 0:
-                high_val = float(highs.get(curr) or highs.get('inr') or (cp * 1.02))
-                low_val = float(lows.get(curr) or lows.get('inr') or (cp * 0.98))
-                chg_pct = float(md.get('price_change_percentage_24h') or 0.0)
-                vol_val = float(vols.get(curr) or vols.get('inr') or 0)
-                mcap_val = float(mcaps.get(curr) or mcaps.get('inr') or (cp * 10000000))
-                ath_val = float(aths.get(curr) or aths.get('inr') or get_coin_ath(coin_id, cp, sym))
+    if cg_entry and cg_entry.get('current_price', 0) > 0:
+        cp_inr = float(cg_entry['current_price'])
+        high_inr = float(cg_entry.get('high_24h') or (cp_inr * 1.015))
+        low_inr = float(cg_entry.get('low_24h') or (cp_inr * 0.985))
+        vol_inr = float(cg_entry.get('total_volume') or 0.0)
+        mcap_inr = float(cg_entry.get('market_cap') or 0.0)
+        ath_inr = float(cg_entry.get('ath') or get_coin_ath(cid_l, cp_inr, sym))
+        chg_pct = float(cg_entry.get('price_change_percentage_24h') or 0.0)
+        is_stale = cg_entry.get('is_stale', False)
+        source = cg_entry.get('source', 'coingecko')
+        data_ts = cg_entry.get('data_timestamp', retrieval_iso)
 
-                result = {
-                    'coin_id': coin_id,
-                    'symbol': sym,
-                    'name': info.get('name', sym),
-                    'image': get_coin_image_url(sym, coin_id),
-                    'current_price': round(cp, 4 if cp < 10 else 2),
-                    'high_24h': round(high_val, 4 if high_val < 10 else 2),
-                    'low_24h': round(low_val, 4 if low_val < 10 else 2),
-                    'price_change_percentage_24h': round(chg_pct, 2),
-                    'total_volume': round(vol_val, 0),
-                    'market_cap': round(mcap_val, 0),
-                    'ath': round(ath_val, 4 if ath_val < 10 else 2)
-                }
-                _STATS_CACHE[cache_key] = {'data': result, 'time': now}
-                _PRICE_CACHE[coin_id] = {'price': cp, 'time': now}
-                return result
-    except Exception as e:
-        print(f"[MarketService] CoinGecko stats notice: {e}")
-
-    # 2. Secondary: Direct web metrics fallback
-    cg_live = fetch_coingecko_web_metrics(coin_id)
-    if cg_live and cg_live.get('current_price', 0) > 0:
-        cp = cg_live['current_price']
-        high_inr = cg_live['high_24h']
-        low_inr = cg_live['low_24h']
-        chg_pct = cg_live['price_change_percentage_24h']
-        market_cap = cp * (19750000.0 if sym == 'BTC' else (120000000.0 if sym == 'ETH' else 1400000000.0 if sym == 'BDX' else 10000000.0))
-        vol_inr = cp * 150000.0
-
-        return {
-            'coin_id': coin_id,
+        result = {
+            'coin_id': cid_l,
             'symbol': sym,
             'name': info.get('name', sym),
-            'image': get_coin_image_url(sym, coin_id),
-            'current_price': cp,
-            'high_24h': high_inr,
-            'low_24h': low_inr,
-            'price_change_percentage_24h': chg_pct,
-            'total_volume': round(vol_inr, 0),
-            'market_cap': round(market_cap, 0),
-            'ath': get_coin_ath(coin_id, cp, sym)
+            'image': cg_entry.get('image') or get_coin_image_url(sym, cid_l),
+            'current_price': round(cp_inr * fx_rate, 4 if (cp_inr * fx_rate) < 10 else 2),
+            'high_24h': round(high_inr * fx_rate, 4 if (high_inr * fx_rate) < 10 else 2),
+            'low_24h': round(low_inr * fx_rate, 4 if (low_inr * fx_rate) < 10 else 2),
+            'price_change_percentage_24h': round(chg_pct, 2),
+            'total_volume': round(vol_inr * fx_rate, 0),
+            'market_cap': round(mcap_inr * fx_rate, 0),
+            'ath': round(ath_inr * fx_rate, 4 if (ath_inr * fx_rate) < 10 else 2),
+            'source': source,
+            'is_stale': is_stale,
+            'retrieval_timestamp': retrieval_iso,
+            'data_timestamp': data_ts,
+            'data_age_seconds': int(now - _COINGECKO_DIAGNOSTICS.get(cid_l, {}).get('fetch_time', now))
         }
 
-    # 2. Secondary: Exchange multi-feed
-    cg_markets = fetch_all_coingecko_markets()
-    if coin_id in cg_markets and cg_markets[coin_id].get('current_price', 0) > 0:
-        return cg_markets[coin_id]
+        _STATS_CACHE[cache_key] = {'data': result, 'time': now}
+        _PRICE_CACHE[cid_l] = {'price': cp_inr, 'time': now}
+        return result
 
-    usd_inr = get_usd_inr_rate()
-    try:
-        res = requests.get(f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={sym}USDT", timeout=2.0)
-        if res.status_code == 200:
-            items = res.json().get('result', {}).get('list', [])
-            if items:
-                b = items[0]
-                last_inr = float(b['lastPrice']) * usd_inr
-                high_inr = float(b['highPrice24h']) * usd_inr
-                low_inr = float(b['lowPrice24h']) * usd_inr
-                chg_pct = float(b['price24hPcnt']) * 100.0
-                vol_inr = float(b['turnover24h']) * usd_inr
-                market_cap = last_inr * (19700000.0 if sym == 'BTC' else 120000000.0)
-
-                return {
-                    'coin_id': coin_id,
-                    'symbol': sym,
-                    'name': info.get('name', sym),
-                    'image': get_coin_image_url(sym, coin_id),
-                    'current_price': round(last_inr, 2 if last_inr > 10 else 4),
-                    'high_24h': round(high_inr, 2 if high_inr > 10 else 4),
-                    'low_24h': round(low_inr, 2 if low_inr > 10 else 4),
-                    'price_change_percentage_24h': round(chg_pct, 2),
-                    'total_volume': round(vol_inr, 0),
-                    'market_cap': round(market_cap, 0),
-                    'ath': get_coin_ath(coin_id, last_inr, sym)
-                }
-    except Exception:
-        pass
-
-    # 3. MEXC 24hr Ticker Fallback
-    try:
-        res = requests.get(f"https://api.mexc.com/api/v3/ticker/24hr?symbol={sym}USDT", timeout=2.0)
-        if res.status_code == 200:
-            m = res.json()
-            if m and 'lastPrice' in m and float(m.get('lastPrice') or 0) > 0:
-                last_inr = float(m['lastPrice']) * usd_inr
-                high_inr = float(m.get('highPrice') or 0) * usd_inr or (last_inr * 1.02)
-                low_inr = float(m.get('lowPrice') or 0) * usd_inr or (last_inr * 0.98)
-                chg_pct = float(m.get('priceChangePercent') or 0) * 100.0
-                vol_inr = float(m.get('quoteVolume') or 0) * usd_inr
-                circ = 1400000000.0 if sym == 'BDX' else 100000000.0
-                market_cap = last_inr * circ
-
-                return {
-                    'coin_id': coin_id,
-                    'symbol': sym,
-                    'name': info.get('name', sym),
-                    'image': get_coin_image_url(sym, coin_id),
-                    'current_price': round(last_inr, 2 if last_inr > 10 else 4),
-                    'high_24h': round(high_inr, 2 if high_inr > 10 else 4),
-                    'low_24h': round(low_inr, 2 if low_inr > 10 else 4),
-                    'price_change_percentage_24h': round(chg_pct, 2),
-                    'total_volume': round(vol_inr, 0),
-                    'market_cap': round(market_cap, 0),
-                    'ath': get_coin_ath(coin_id, last_inr, sym)
-                }
-    except Exception:
-        pass
-
-    # 4. Gate.io 24hr Ticker Fallback
-    try:
-        res = requests.get(f"https://api.gateio.ws/api/v4/spot/tickers?currency_pair={sym}_USDT", timeout=2.0)
-        if res.status_code == 200:
-            g_list = res.json()
-            if g_list and isinstance(g_list, list) and len(g_list) > 0:
-                g = g_list[0]
-                last_inr = float(g.get('last') or 0) * usd_inr
-                if last_inr > 0:
-                    high_inr = float(g.get('high_24h') or 0) * usd_inr or (last_inr * 1.02)
-                    low_inr = float(g.get('low_24h') or 0) * usd_inr or (last_inr * 0.98)
-                    chg_pct = float(g.get('change_percentage') or 0)
-                    vol_inr = float(g.get('quote_volume') or 0) * usd_inr
-                    return {
-                        'coin_id': coin_id,
-                        'symbol': sym,
-                        'name': info.get('name', sym),
-                        'image': get_coin_image_url(sym, coin_id),
-                        'current_price': round(last_inr, 2 if last_inr > 10 else 4),
-                        'high_24h': round(high_inr, 2 if high_inr > 10 else 4),
-                        'low_24h': round(low_inr, 2 if low_inr > 10 else 4),
-                        'price_change_percentage_24h': round(chg_pct, 2),
-                        'total_volume': round(vol_inr, 0),
-                        'market_cap': round(last_inr * 10000000.0, 0),
-                        'ath': get_coin_ath(coin_id, last_inr, sym)
-                    }
-    except Exception:
-        pass
-
-    # 5. Database Real Historical Metrics Fallback
+    # 2. Database historical metrics fallback
     try:
         conn = sqlite3.connect(DB_PATH, timeout=5)
         cur = conn.cursor()
         cur.execute("""
-            SELECT price, volume, market_cap 
+            SELECT price, volume, market_cap, timestamp
             FROM market_prices 
             WHERE coin_id = ? 
-            ORDER BY id DESC LIMIT 1
-        """, (coin_id,))
+            ORDER BY timestamp DESC LIMIT 1
+        """, (cid_l,))
         last_row = cur.fetchone()
-        
-        cur.execute("""
-            SELECT MAX(price), MIN(price), AVG(volume), MAX(market_cap) 
-            FROM (SELECT price, volume, market_cap FROM market_prices WHERE coin_id = ? ORDER BY id DESC LIMIT 48)
-        """, (coin_id,))
-        stats_row = cur.fetchone()
         conn.close()
 
         if last_row and last_row[0]:
             last_p = float(last_row[0])
-            max_p = float(stats_row[0] or last_p)
-            min_p = float(stats_row[1] or last_p)
-            avg_v = float(stats_row[2] or 0)
-            mc = float(stats_row[3] or 0) or (last_p * 1000000.0)
-            chg = round(((last_p - min_p) / min_p * 100), 2) if min_p > 0 and max_p != min_p else 0.0
-
-            return {
-                'coin_id': coin_id,
+            result = {
+                'coin_id': cid_l,
                 'symbol': sym,
                 'name': info.get('name', sym),
-                'image': get_coin_image_url(sym, coin_id),
-                'current_price': round(last_p, 2 if last_p > 10 else 4),
-                'high_24h': round(max_p, 2 if max_p > 10 else 4),
-                'low_24h': round(min_p, 2 if min_p > 10 else 4),
-                'price_change_percentage_24h': chg,
-                'total_volume': round(avg_v, 0),
-                'market_cap': round(mc, 0),
-                'ath': get_coin_ath(coin_id, last_p, sym)
+                'image': get_coin_image_url(sym, cid_l),
+                'current_price': round(last_p * fx_rate, 4 if (last_p * fx_rate) < 10 else 2),
+                'high_24h': round(last_p * 1.02 * fx_rate, 4 if (last_p * fx_rate) < 10 else 2),
+                'low_24h': round(last_p * 0.98 * fx_rate, 4 if (last_p * fx_rate) < 10 else 2),
+                'price_change_percentage_24h': 0.0,
+                'total_volume': round(float(last_row[1] or 0) * fx_rate, 0),
+                'market_cap': round(float(last_row[2] or 0) * fx_rate, 0),
+                'ath': get_coin_ath(cid_l, last_p, sym),
+                'source': 'database_archive',
+                'is_stale': True,
+                'retrieval_timestamp': retrieval_iso,
+                'data_timestamp': str(last_row[3]),
+                'data_age_seconds': 3600
             }
+            _STATS_CACHE[cache_key] = {'data': result, 'time': now}
+            return result
     except Exception:
         pass
 
-    cp = fetch_live_coin_price(coin_id)
+    cp = fetch_live_coin_price(cid_l)
     return {
-        'coin_id': coin_id,
+        'coin_id': cid_l,
         'symbol': sym,
         'name': info.get('name', sym),
-        'image': get_coin_image_url(sym, coin_id),
-        'current_price': round(cp, 2 if cp > 10 else 4),
-        'high_24h': round(cp, 2 if cp > 10 else 4),
-        'low_24h': round(cp, 2 if cp > 10 else 4),
+        'image': get_coin_image_url(sym, cid_l),
+        'current_price': round(cp * fx_rate, 4 if (cp * fx_rate) < 10 else 2),
+        'high_24h': round(cp * fx_rate, 4 if (cp * fx_rate) < 10 else 2),
+        'low_24h': round(cp * fx_rate, 4 if (cp * fx_rate) < 10 else 2),
         'price_change_percentage_24h': 0.0,
         'total_volume': 0,
-        'market_cap': round(cp * 1000000, 0),
-        'ath': get_coin_ath(coin_id, cp, sym)
+        'market_cap': 0,
+        'ath': get_coin_ath(cid_l, cp, sym),
+        'source': 'provisional_fallback',
+        'is_stale': True,
+        'retrieval_timestamp': retrieval_iso,
+        'data_timestamp': retrieval_iso,
+        'data_age_seconds': 0
+    }
+
+def get_market_diagnostics(coin_id, currency='inr'):
+    """
+    Returns full diagnostic metadata for market-data auditing:
+    Coin ID, Canonical CoinGecko ID, Currency, Source, Retrieval Timestamp,
+    Data Timestamp, Data Age in Seconds, is_stale status, and Last API Error.
+    """
+    cid_l = (coin_id or 'bitcoin').lower().strip()
+    sym = get_symbol_for_coin(cid_l)
+    info = SUPPORTED_COINS.get(cid_l, {'symbol': sym, 'coingecko_id': cid_l})
+    cg_id = info.get('coingecko_id', cid_l)
+    
+    diag = _COINGECKO_DIAGNOSTICS.get(cid_l) or _COINGECKO_DIAGNOSTICS.get(cg_id) or {}
+    stats = fetch_live_24h_stats(cid_l, currency)
+    
+    now = time.time()
+    fetch_t = diag.get('fetch_time', now)
+    
+    return {
+        'coin_id': cid_l,
+        'canonical_coingecko_id': cg_id,
+        'symbol': sym,
+        'currency': currency.upper(),
+        'source': stats.get('source', diag.get('source', 'coingecko')),
+        'current_price': stats.get('current_price'),
+        'retrieval_timestamp': stats.get('retrieval_timestamp') or diag.get('retrieval_timestamp'),
+        'data_timestamp': stats.get('data_timestamp') or diag.get('data_timestamp'),
+        'data_age_seconds': int(now - fetch_t),
+        'is_stale': stats.get('is_stale', diag.get('is_stale', False)),
+        'last_api_error': diag.get('last_api_error', _LAST_API_ERROR),
+        'rate_limit_status': 'throttled' if diag.get('is_rate_limited') else 'ok'
     }
 
 def fetch_chart_history(coin_id, days, currency='inr'):
